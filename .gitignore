@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# ML artifacts
+*.pt
+*.onnx
+*.engine
+*.tflite
+runs/
+wandb/
+
+# Data (keep folder structure, ignore heavy files)
+data/raw/
+data/processed/
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Models (keep folder structure, ignore weight files)
+models/weights/
+!models/.gitkeep
+!models/weights/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env

@@ -43,6 +43,10 @@ models/weights/
 !models/.gitkeep
 !models/weights/.gitkeep
 
+# Outputs (reports)
+outputs/
+!outputs/.gitkeep
+
 # Logs
 logs/
 *.log

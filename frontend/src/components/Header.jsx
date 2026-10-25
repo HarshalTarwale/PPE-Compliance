@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Activity, Users, UserPlus, Radio, Wifi, WifiOff } from 'lucide-react';
+import { ShieldAlert, Activity, Users, UserPlus, Radio, Wifi, WifiOff, Video } from 'lucide-react';
 
 export default function Header({
   activeTab,
@@ -35,6 +35,15 @@ export default function Header({
       </div>
 
       <nav className="header-nav">
+        <button
+          className={`nav-link ${activeTab === 'live' ? 'active' : ''}`}
+          onClick={() => onTabChange('live')}
+          title="Live Camera & Sensor Stream"
+        >
+          <Video size={16} />
+          <span>Live Feed</span>
+          {isStreamActive && <span className="live-tab-badge" title="Live stream active" />}
+        </button>
         <button
           className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`}
           onClick={() => onTabChange('dashboard')}

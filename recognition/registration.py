@@ -42,6 +42,10 @@ logger = logging.getLogger("registration")
 # Default local storage location for face database
 DEFAULT_STORAGE_DIR = _PROJECT_ROOT / "data" / "employees"
 
+# Default cosine similarity threshold for open-set identification.
+# 0.50 provides high discrimination against false acceptances in surveillance environments.
+DEFAULT_IDENTIFICATION_THRESHOLD: float = 0.50
+
 
 # ---------------------------------------------------------------------------
 # Enums and Data Containers
@@ -133,6 +137,8 @@ class EmployeeStorage:
         self.storage_dir = Path(storage_dir) if storage_dir else DEFAULT_STORAGE_DIR
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.catalog_path = self.storage_dir / "catalog.json"
+        self._cached_records: Optional[List[EmployeeRecord]] = None
+        self._cached_mtime: float = 0.0
         self._ensure_catalog()
 
     def _ensure_catalog(self) -> None:
@@ -190,6 +196,7 @@ class EmployeeStorage:
         catalog = self._load_catalog()
         catalog[record.employee_id] = record.to_dict()
         self._save_catalog(catalog)
+        self._cached_records = None
 
         logger.info(
             "Saved employee record for '%s' (%s) with %d samples.",
@@ -244,12 +251,21 @@ class EmployeeStorage:
 
     def load_all_records(self) -> List[EmployeeRecord]:
         """Load all full employee records into memory for fast matching."""
+        current_mtime = self.catalog_path.stat().st_mtime if self.catalog_path.is_file() else 0.0
+        if (
+            getattr(self, "_cached_records", None) is not None
+            and getattr(self, "_cached_mtime", None) == current_mtime
+        ):
+            return self._cached_records
+
         catalog = self._load_catalog()
         records: List[EmployeeRecord] = []
         for emp_id in catalog.keys():
             rec = self.load_record(emp_id)
             if rec is not None:
                 records.append(rec)
+        self._cached_records = records
+        self._cached_mtime = current_mtime
         return records
 
     def delete_record(self, employee_id: str) -> bool:
@@ -273,6 +289,7 @@ class EmployeeStorage:
 
         del catalog[employee_id]
         self._save_catalog(catalog)
+        self._cached_records = None
         logger.info("Deleted employee record: %s", employee_id)
         return True
 
@@ -289,7 +306,7 @@ class EmployeeRegistrationService:
         self,
         storage: Optional[EmployeeStorage] = None,
         embedding_engine: Optional[FaceEmbeddingEngine] = None,
-        default_threshold: float = DEFAULT_COSINE_THRESHOLD,
+        default_threshold: float = DEFAULT_IDENTIFICATION_THRESHOLD,
     ) -> None:
         """Initialize registration service.
 
@@ -515,10 +532,15 @@ class EmployeeRegistrationService:
     # Recognition / Identification
     # -----------------------------------------------------------------------
 
+    # Minimum gap between best and second-best match to accept identification.
+    # Prevents ambiguous matches where two employees score almost equally.
+    MATCH_MARGIN: float = 0.09
+
     def identify(
         self,
         face_input: Union[np.ndarray, str, Path],
         threshold: Optional[float] = None,
+        prefer_center: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Identify a person by matching their face against the registered employee database.
 
@@ -528,6 +550,7 @@ class EmployeeRegistrationService:
         Args:
             face_input: Face embedding array (128,) or cropped BGR face image.
             threshold: Cosine similarity threshold (defaults to self.default_threshold).
+            prefer_center: When multiple faces are detected, select face closest to horizontal center.
 
         Returns:
             Dictionary with employee_id, employee_name, similarity if matched, or None if unknown.
@@ -551,35 +574,71 @@ class EmployeeRegistrationService:
             if not faces:
                 return None
 
-            # Use primary face (highest confidence)
-            query_emb = self.engine.compute_embedding(img, faces[0])
+            img_w = img.shape[1]
+            img_cx = img_w / 2.0
 
-        # 2. Compare against all registered employees
+            if prefer_center:
+                # Reject faces whose center falls in the outer 15% of the crop
+                # horizontally — these likely belong to adjacent persons whose
+                # face bleeds into this person's bounding-box crop.
+                edge_margin = 0.15
+                valid_faces = [
+                    f for f in faces
+                    if edge_margin <= (f.x + f.w / 2.0) / img_w <= (1.0 - edge_margin)
+                ]
+                if not valid_faces:
+                    return None
+
+                # Among valid faces, pick the one closest to horizontal center
+                target_face = min(valid_faces, key=lambda f: abs((f.x + f.w / 2.0) - img_cx))
+            else:
+                target_face = faces[0]
+
+            query_emb = self.engine.compute_embedding(img, target_face)
+
+        # 2. Compare against all registered employees using ONLY the mean
+        # embedding.  Using individual sample embeddings inflates scores via
+        # max-of-N and causes false matches across different people.
         records = self.storage.load_all_records()
         if not records:
             return None
 
-        best_match: Optional[EmployeeRecord] = None
-        best_similarity: float = -1.0
-
+        scored: list = []  # [(similarity, record), ...]
         for rec in records:
             sim = self.engine.compute_similarity(query_emb, rec.mean_embedding)
-            if sim > best_similarity:
-                best_similarity = sim
-                best_match = rec
+            scored.append((sim, rec))
+
+        # Sort descending by similarity
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        best_similarity, best_match = scored[0]
 
         # 3. Check threshold
-        if best_match is not None and best_similarity >= thresh:
-            return {
-                "employee_id": best_match.employee_id,
-                "employee_name": best_match.employee_name,
-                "similarity": best_similarity,
-                "threshold": thresh,
-                "matched": True,
-            }
+        if best_similarity < thresh:
+            return None
 
-        # Unknown person
-        return None
+        # 4. Margin check — the best must be clearly better than the runner-up.
+        # This prevents ambiguous identifications where two employees score
+        # almost equally (e.g. 0.42 vs 0.40), which is indistinguishable noise.
+        if len(scored) > 1:
+            second_similarity = scored[1][0]
+            margin = best_similarity - second_similarity
+            if margin < self.MATCH_MARGIN:
+                logger.debug(
+                    "Ambiguous match rejected: best=%.4f (%s) vs second=%.4f (%s), margin=%.4f < %.4f",
+                    best_similarity, best_match.employee_id,
+                    second_similarity, scored[1][1].employee_id,
+                    margin, self.MATCH_MARGIN,
+                )
+                return None
+
+        return {
+            "employee_id": best_match.employee_id,
+            "employee_name": best_match.employee_name,
+            "similarity": best_similarity,
+            "threshold": thresh,
+            "matched": True,
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -50,11 +50,27 @@ export async function fetchMonitoringStatus() {
   return handleResponse(res);
 }
 
-export async function startMonitoring(source = 0) {
+export async function startMonitoring(source = 0, flipHorizontal = true, flipVertical = false) {
   const res = await fetch(`${API_BASE}/monitoring/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source }),
+    body: JSON.stringify({
+      source,
+      flip_horizontal: flipHorizontal,
+      flip_vertical: flipVertical,
+    }),
+  });
+  return handleResponse(res);
+}
+
+export async function toggleCameraFlip(flipHorizontal, flipVertical) {
+  const res = await fetch(`${API_BASE}/monitoring/flip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      flip_horizontal: flipHorizontal,
+      flip_vertical: flipVertical,
+    }),
   });
   return handleResponse(res);
 }
@@ -64,4 +80,12 @@ export async function stopMonitoring() {
     method: 'POST',
   });
   return handleResponse(res);
+}
+
+export async function fetchCameraSnapshot(raw = true) {
+  const res = await fetch(`${API_BASE}/monitoring/snapshot?raw=${raw}`);
+  if (!res.ok) {
+    throw new Error(`Camera snapshot unavailable (HTTP ${res.status}). Ensure stream or webcam is active.`);
+  }
+  return res.blob();
 }

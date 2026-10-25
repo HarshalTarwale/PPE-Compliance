@@ -17,6 +17,7 @@ from fastapi import (
 from backend.schemas.monitoring import (
     MonitoringControlRequest,
     MonitoringControlResponse,
+    MonitoringFlipRequest,
     MonitoringStatusResponse,
 )
 from backend.services.monitoring_service import MonitoringService
@@ -58,7 +59,27 @@ async def start_monitoring(
 ) -> MonitoringControlResponse:
     """Start background video capture and PPE inference loop on a camera or video file."""
     service = get_monitoring_service(request)
-    return service.start(source=payload.source)
+    return service.start(
+        source=payload.source,
+        flip_horizontal=payload.flip_horizontal,
+        flip_vertical=payload.flip_vertical,
+    )
+
+
+@router.post(
+    "/monitoring/flip",
+    summary="Dynamically toggle camera flip / mirror orientation",
+)
+async def toggle_camera_flip(
+    payload: MonitoringFlipRequest,
+    request: Request,
+):
+    """Toggle horizontal or vertical camera flip dynamically."""
+    service = get_monitoring_service(request)
+    return service.set_flip(
+        flip_horizontal=payload.flip_horizontal,
+        flip_vertical=payload.flip_vertical,
+    )
 
 
 @router.post(
@@ -70,6 +91,52 @@ async def stop_monitoring(request: Request) -> MonitoringControlResponse:
     """Stop the background inference worker loop."""
     service = get_monitoring_service(request)
     return service.stop()
+
+
+@router.get(
+    "/monitoring/snapshot",
+    summary="Get single JPEG snapshot of camera frame (clean unannotated for employee enrollment)",
+)
+async def get_camera_snapshot(request: Request, raw: bool = True):
+    """Retrieve the most recent camera frame as an unannotated JPEG image for face registration."""
+    from fastapi.responses import Response
+    service = get_monitoring_service(request)
+    jpeg_bytes = service.get_latest_raw_frame_jpeg() if raw else service.get_latest_frame_jpeg()
+    if jpeg_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No camera frame available. Please ensure stream is active or connect webcam.",
+        )
+    return Response(content=jpeg_bytes, media_type="image/jpeg")
+
+
+@router.get(
+    "/monitoring/video_feed",
+    summary="Real-Time Annotated Camera MJPEG Stream",
+)
+async def get_video_feed(request: Request):
+    """Streams live camera frames as MJPEG multipart stream for in-browser visual inspection."""
+    import asyncio
+    from fastapi.responses import StreamingResponse
+
+    service = get_monitoring_service(request)
+
+    async def frame_stream():
+        while True:
+            if await request.is_disconnected():
+                break
+            jpeg_bytes = service.get_latest_frame_jpeg()
+            if jpeg_bytes is not None:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+                )
+            await asyncio.sleep(0.033)
+
+    return StreamingResponse(
+        frame_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 # ---------------------------------------------------------------------------

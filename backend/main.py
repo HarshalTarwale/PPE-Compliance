@@ -33,6 +33,8 @@ from backend.routes.health import router as health_router
 from backend.routes.monitoring import router as monitoring_router
 from backend.services.employee_service import EmployeeService
 from backend.services.monitoring_service import MonitoringService
+from detection.pipeline import PPECompliancePipeline
+from recognition.registration import EmployeeRegistrationService
 
 logger = logging.getLogger("backend")
 
@@ -56,7 +58,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.employee_service = EmployeeService()
 
     if not hasattr(app.state, "monitoring_service") or app.state.monitoring_service is None:
-        app.state.monitoring_service = MonitoringService(event_loop=loop)
+        shared_storage = getattr(app.state.employee_service, "storage", None)
+        pipeline_face_service = EmployeeRegistrationService(storage=shared_storage)
+        pipeline = PPECompliancePipeline(face_service=pipeline_face_service)
+        app.state.monitoring_service = MonitoringService(pipeline=pipeline, event_loop=loop)
     else:
         app.state.monitoring_service.set_event_loop(loop)
 

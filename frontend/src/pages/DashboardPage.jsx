@@ -1,15 +1,12 @@
 import React from 'react';
-import { Users, ShieldCheck, ShieldAlert, Cpu, Activity, Clock } from 'lucide-react';
+import { Users, ShieldCheck, ShieldAlert, Activity, Camera, ArrowRight, Radio } from 'lucide-react';
 import StatCard from '../components/StatCard';
-import LiveMonitoring from '../components/LiveMonitoring';
 import EmployeeTable from '../components/EmployeeTable';
 import ViolationAlert from '../components/ViolationAlert';
 
 export default function DashboardPage({
   monitoringStatus,
-  onStartStream,
-  onStopStream,
-  isStreamLoading,
+  onNavigateLive,
 }) {
   const {
     is_active = false,
@@ -26,7 +23,7 @@ export default function DashboardPage({
     total_tracked > 0 ? ((compliant_count / total_tracked) * 100).toFixed(0) : 100;
 
   return (
-    <div>
+    <div className="dashboard-page">
       {/* Safety Violation Alert Bar */}
       <ViolationAlert violations={violations} />
 
@@ -62,23 +59,75 @@ export default function DashboardPage({
         />
       </div>
 
-      {/* Main Monitoring & Status Grid */}
-      <div className="dashboard-split">
-        <LiveMonitoring
-          isActive={is_active}
-          source={source}
-          persons={persons}
-          telemetry={telemetry}
-          totalTracked={total_tracked}
-          compliantCount={compliant_count}
-          nonCompliantCount={non_compliant_count}
-          onStart={onStartStream}
-          onStop={onStopStream}
-          isLoading={isStreamLoading}
-        />
+      {/* Quick Camera Navigation Action Banner */}
+      <div
+        className="panel"
+        style={{
+          marginBottom: '1.25rem',
+          padding: '0.85rem 1.25rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          background: is_active
+            ? 'linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, rgba(15, 23, 42, 0.95) 100%)'
+            : 'var(--bg-panel)',
+          borderLeft: `3px solid ${is_active ? 'var(--color-compliant)' : 'var(--border-strong)'}`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <div
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: is_active ? 'var(--color-compliant-bg)' : 'var(--bg-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: is_active ? 'var(--color-compliant)' : 'var(--text-muted)',
+            }}
+          >
+            <Camera size={18} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)' }}>
+                Live Camera Sensor Feed
+              </span>
+              <span
+                className="badge"
+                style={{
+                  fontSize: '0.68rem',
+                  backgroundColor: is_active ? 'var(--color-compliant-bg)' : 'var(--bg-surface)',
+                  color: is_active ? 'var(--color-compliant)' : 'var(--text-muted)',
+                  borderColor: is_active ? 'var(--color-compliant-border)' : 'var(--border-default)',
+                }}
+              >
+                {is_active ? 'STREAMING ACTIVE' : 'STANDBY'}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+              {is_active
+                ? `Currently processing source ${source || '0'} at ${telemetry.fps ? telemetry.fps.toFixed(1) : '30'} FPS (${total_tracked} worker(s) in view)`
+                : 'Sensor feed is on standby. Switch to Live Feed to start camera and view real-time overlays.'}
+            </div>
+          </div>
+        </div>
 
-        <EmployeeTable persons={persons} />
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={onNavigateLive}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem' }}
+        >
+          <span>{is_active ? 'View Live Video Stream' : 'Open Live Camera Feed'}</span>
+          <ArrowRight size={14} />
+        </button>
       </div>
+
+      {/* Main Real-Time Tracked Personnel Status Table (Full Screen Fit) */}
+      <EmployeeTable persons={persons} />
     </div>
   );
 }

@@ -120,7 +120,7 @@ class PPEDetector:
         iou: float = 0.45,
         device: str = "auto",
         imgsz: int = 640,
-        half: bool = False,
+        half: Optional[bool] = None,
     ) -> None:
         """Initialize the PPE detector.
 
@@ -130,7 +130,7 @@ class PPEDetector:
             iou: NMS IoU threshold (0.0 to 1.0).
             device: 'auto', 'cpu', '0', etc.
             imgsz: Inference image size.
-            half: Whether to use FP16 half-precision inference (CUDA only).
+            half: Whether to use FP16 half-precision inference (auto-enabled on CUDA).
 
         Raises:
             FileNotFoundError: If model_path does not exist.
@@ -158,8 +158,11 @@ class PPEDetector:
         else:
             self.device = device
 
-        # FP16 is only valid on CUDA devices
-        self.half = bool(half) and (self.device != "cpu")
+        # FP16 is only valid on CUDA devices (auto-enable by default on GPU)
+        if half is None:
+            self.half = (self.device != "cpu")
+        else:
+            self.half = bool(half) and (self.device != "cpu")
 
         logger.info(
             "Loading YOLO detector: weights='%s', device='%s', conf=%.2f, iou=%.2f, half=%s",

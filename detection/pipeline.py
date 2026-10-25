@@ -163,6 +163,7 @@ class ActiveTrack:
     employee_name: str = "UNKNOWN"
     face_similarity: Optional[float] = None
     face_attempts: int = 0
+    failed_rechecks: int = 0
 
 
 class SimpleIoUTracker:
@@ -287,7 +288,7 @@ class PPECompliancePipeline:
         temporal_filter: Optional[PPETemporalFilter] = None,
         compliance_engine: Optional[ComplianceEngine] = None,
         tracker: Optional[SimpleIoUTracker] = None,
-        face_confidence_threshold: float = 0.363,
+        face_confidence_threshold: float = 0.50,
         face_check_interval: int = 10,
     ) -> None:
         """Initialize the integrated pipeline.
@@ -324,6 +325,7 @@ class PPECompliancePipeline:
         frame: np.ndarray,
         frame_id: Optional[int] = None,
         draw_overlay: bool = True,
+        draw_hud: bool = False,
     ) -> PipelineResult:
         """Process a single frame through the full integration pipeline.
 
@@ -331,6 +333,7 @@ class PPECompliancePipeline:
             frame: Input image in BGR format.
             frame_id: Optional sequential frame index.
             draw_overlay: If True, draws visual bounding boxes and telemetry.
+            draw_hud: If True, draws telemetry HUD box in top-left (default False).
 
         Returns:
             PipelineResult containing list of TrackedPersonRecord and annotated frame.
@@ -380,51 +383,97 @@ class PPECompliancePipeline:
         )
         t_assoc = (time.perf_counter() - t0) * 1000.0
 
-        # Map each associated person to its corresponding ActiveTrack
-        person_records: List[TrackedPersonRecord] = []
+        # ---------------------------------------------------------------
+        # 4. Face Recognition & Identity Verification
+        # ---------------------------------------------------------------
         t_rec_accum = 0.0
-        t_smooth_accum = 0.0
-
-        for (track, _), assoc_person in zip(matched_tracks, assoc_result.persons):
-            # ---------------------------------------------------------------
-            # 4. Face Recognition & Identity Verification
-            # ---------------------------------------------------------------
-            # Only attempt face identification if person is currently UNKNOWN,
-            # or on periodic intervals to avoid redundant inference
+        for track, _ in matched_tracks:
             t_rec_start = time.perf_counter()
-            should_check_face = (
-                track.employee_id == "UNKNOWN"
-                or (track.face_attempts % self.face_check_interval == 0)
-            )
+            # Adaptive face verification:
+            # Check immediately on frame 0, and every 2 frames while UNKNOWN so identity is discovered promptly
+            # If verified: re-verify periodically (every 60 frames ~ 2s) to maintain continuous tracking
+            recheck_interval = self.face_check_interval * 6 if track.employee_id != "UNKNOWN" else 2
+            should_check_face = (track.face_attempts == 0) or (track.face_attempts % recheck_interval == 0)
+            track.face_attempts += 1
 
             if should_check_face and self.face_service:
-                track.face_attempts += 1
-                # Safely crop head region: upper 38% of person bounding box
                 px1, py1, px2, py2 = track.bbox
                 c_px1 = max(0, min(w - 1, px1))
                 c_py1 = max(0, min(h - 1, py1))
                 c_px2 = max(c_px1 + 1, min(w, px2))
-                head_h = int(max(20, (py2 - py1) * 0.38))
+                c_py2 = max(c_py1 + 1, min(h, py2))
+
+                # Upper-body / head crop (upper 65% covers head, face, and chin for seated & standing postures)
+                head_h = int(max(40, (py2 - py1) * 0.65))
                 c_head_y2 = max(c_py1 + 1, min(h, c_py1 + head_h))
                 head_crop = frame[c_py1:c_head_y2, c_px1:c_px2]
 
+                match = None
                 if head_crop.size > 0:
                     match = self.face_service.identify(
                         head_crop,
                         threshold=self.face_confidence_threshold,
+                        prefer_center=True,
                     )
-                    if match is not None:
-                        # Verified identity
-                        track.employee_id = match["employee_id"]
-                        track.employee_name = match["employee_name"]
-                        track.face_similarity = match["similarity"]
-                    # If match is None, track remains strictly "UNKNOWN"
+
+                # Fallback to full person crop if upper crop didn't find face (e.g. close-up webcam)
+                if match is None:
+                    person_crop = frame[c_py1:c_py2, c_px1:c_px2]
+                    if person_crop.size > 0:
+                        match = self.face_service.identify(
+                            person_crop,
+                            threshold=self.face_confidence_threshold,
+                            prefer_center=True,
+                        )
+
+                if match is not None:
+                    # Verified identity
+                    track.employee_id = match["employee_id"]
+                    track.employee_name = match["employee_name"]
+                    track.face_similarity = match["similarity"]
+                    track.failed_rechecks = 0
+                else:
+                    # Revoke stale identity on multiple consecutive re-verification failures.
+                    # Prevents transient occlusions or head turns from flickering identity to UNKNOWN,
+                    # while ensuring track identity is revoked if the person actually leaves.
+                    if track.employee_id != "UNKNOWN":
+                        track.failed_rechecks += 1
+                        if track.failed_rechecks >= 3:
+                            track.employee_id = "UNKNOWN"
+                            track.employee_name = "UNKNOWN"
+                            track.face_similarity = None
+                            track.failed_rechecks = 0
 
             t_rec_accum += (time.perf_counter() - t_rec_start) * 1000.0
 
-            # ---------------------------------------------------------------
-            # 5. Temporal Smoothing & Anti-Flicker Filtering
-            # ---------------------------------------------------------------
+        # Enforce 1-to-1 identity uniqueness across all tracks in the current frame:
+        # A single human employee cannot be in multiple places at the same time.
+        assigned_employees: Dict[str, Tuple[ActiveTrack, float]] = {}
+        for track, _ in matched_tracks:
+            if track.employee_id != "UNKNOWN":
+                sim = track.face_similarity if track.face_similarity is not None else 0.0
+                if track.employee_id in assigned_employees:
+                    prev_track, prev_sim = assigned_employees[track.employee_id]
+                    # Retain identity for the track with higher similarity score; reset duplicate to UNKNOWN
+                    if sim > prev_sim:
+                        prev_track.employee_id = "UNKNOWN"
+                        prev_track.employee_name = "UNKNOWN"
+                        prev_track.face_similarity = None
+                        assigned_employees[track.employee_id] = (track, sim)
+                    else:
+                        track.employee_id = "UNKNOWN"
+                        track.employee_name = "UNKNOWN"
+                        track.face_similarity = None
+                else:
+                    assigned_employees[track.employee_id] = (track, sim)
+
+        # ---------------------------------------------------------------
+        # 5. Temporal Smoothing & Anti-Flicker Filtering
+        # ---------------------------------------------------------------
+        person_records: List[TrackedPersonRecord] = []
+        t_smooth_accum = 0.0
+
+        for (track, _), assoc_person in zip(matched_tracks, assoc_result.persons):
             t_sm_start = time.perf_counter()
 
             # Build single-frame PPE info from spatial association
@@ -475,7 +524,7 @@ class PPECompliancePipeline:
 
         annotated = None
         if draw_overlay:
-            annotated = self.render_overlay(frame.copy(), person_records, telemetry)
+            annotated = self.render_overlay(frame.copy(), person_records, telemetry, draw_hud=draw_hud)
 
         return PipelineResult(
             records=person_records,
@@ -519,8 +568,9 @@ class PPECompliancePipeline:
         frame: np.ndarray,
         records: List[TrackedPersonRecord],
         telemetry: PipelineTelemetry,
+        draw_hud: bool = False,
     ) -> np.ndarray:
-        """Render person compliance bounding boxes, identity tags, and telemetry HUD."""
+        """Render person compliance bounding boxes, identity tags, and optional telemetry HUD."""
         out = frame
 
         for rec in records:
@@ -569,6 +619,9 @@ class PPECompliancePipeline:
                 1,
                 cv2.LINE_AA,
             )
+
+        if not draw_hud:
+            return out
 
         # Draw HUD in top-left
         hud_w, hud_h = 280, 110
@@ -639,9 +692,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera", type=str, default=None, help="Webcam device index (e.g. 0).")
     parser.add_argument("--model", type=str, default="models/weights/best.pt", help="YOLO model path.")
     parser.add_argument("--confidence", type=float, default=0.25, help="Detection threshold.")
-    parser.add_argument("--face-thresh", type=float, default=0.363, help="Face recognition threshold.")
+    parser.add_argument("--face-thresh", type=float, default=0.50, help="Face recognition threshold.")
     parser.add_argument("--device", type=str, default="auto", help="Inference device: 'auto', '0', 'cpu'.")
-    parser.add_argument("--save-output", type=str, default=None, help="Path to save annotated output.")
+    parser.add_argument("--flip-h", action="store_true", default=True, help="Flip camera horizontally (mirror mode).")
+    parser.add_argument("--no-flip-h", dest="flip_h", action="store_false", help="Disable horizontal flip.")
+    parser.add_argument("--flip-v", action="store_true", default=False, help="Flip camera vertically.")
     parser.add_argument("--headless", action="store_true", help="Run without GUI display.")
     return parser
 
@@ -707,6 +762,13 @@ def main() -> None:
             ret, frame = cap.read()
             if not ret or frame is None:
                 break
+
+            if args.flip_h and args.flip_v:
+                frame = cv2.flip(frame, -1)
+            elif args.flip_h:
+                frame = cv2.flip(frame, 1)
+            elif args.flip_v:
+                frame = cv2.flip(frame, 0)
 
             result = pipeline.process_frame(frame, draw_overlay=True)
 

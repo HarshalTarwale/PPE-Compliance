@@ -1,5 +1,6 @@
-import React, { useRef, useEffect } from 'react';
-import { Play, Square, Camera, Video, AlertCircle } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Play, Square, Camera, Video, AlertCircle, FlipHorizontal } from 'lucide-react';
+import { toggleCameraFlip } from '../api/client';
 
 export default function LiveMonitoring({
   isActive,
@@ -14,6 +15,19 @@ export default function LiveMonitoring({
   isLoading = false,
 }) {
   const canvasRef = useRef(null);
+  const [isFlipped, setIsFlipped] = useState(true);
+
+  const handleToggleFlip = async () => {
+    const nextFlipped = !isFlipped;
+    setIsFlipped(nextFlipped);
+    if (isActive) {
+      try {
+        await toggleCameraFlip(nextFlipped, false);
+      } catch (err) {
+        console.error('Failed to toggle camera flip:', err);
+      }
+    }
+  };
 
   // Reference video/image frame resolution for coordinates (640x480 standard YOLO coordinate space)
   const BASE_WIDTH = 640;
@@ -162,11 +176,33 @@ export default function LiveMonitoring({
           <Camera size={18} />
           <span>Real-Time Sensor Viewport</span>
         </div>
-        <div className="panel-controls">
+        <div className="panel-controls" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button
+            className="btn btn-sm"
+            onClick={handleToggleFlip}
+            title={isFlipped ? 'Camera is Mirrored horizontally (Click to disable mirror)' : 'Camera is Normal (Click to mirror)'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              backgroundColor: isFlipped ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${isFlipped ? '#3b82f6' : 'rgba(255, 255, 255, 0.15)'}`,
+              color: isFlipped ? '#60a5fa' : '#94a3b8',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              padding: '0.35rem 0.65rem',
+              fontSize: '0.8rem',
+              fontWeight: 500,
+            }}
+          >
+            <FlipHorizontal size={14} />
+            <span>{isFlipped ? 'Mirrored (Flipped)' : 'Normal'}</span>
+          </button>
+
           {!isActive ? (
             <button
               className="btn btn-primary btn-sm"
-              onClick={() => onStart(0)}
+              onClick={() => onStart(0, isFlipped, false)}
               disabled={isLoading}
             >
               <Play size={14} />
@@ -187,12 +223,23 @@ export default function LiveMonitoring({
 
       <div className="panel-body" style={{ padding: '0.75rem' }}>
         <div className="viewport-container">
-          <canvas
-            ref={canvasRef}
-            width={640}
-            height={360}
-            className="viewport-canvas"
-          />
+          {isActive ? (
+            <img
+              src="http://127.0.0.1:8000/monitoring/video_feed"
+              alt="Live Camera Feed"
+              className="viewport-stream-img"
+              onError={(e) => {
+                console.warn('Video stream reconnecting...');
+              }}
+            />
+          ) : (
+            <canvas
+              ref={canvasRef}
+              width={640}
+              height={360}
+              className="viewport-canvas"
+            />
+          )}
 
           {!isActive && persons.length === 0 && (
             <div className="viewport-idle-state" style={{ position: 'absolute' }}>
@@ -206,37 +253,7 @@ export default function LiveMonitoring({
             </div>
           )}
 
-          {/* Real-Time Telemetry HUD Overlay */}
-          <div className="viewport-hud">
-            <div className="hud-row">
-              <span className="hud-label">STATUS</span>
-              <span
-                className="hud-value"
-                style={{ color: isActive ? 'var(--color-compliant)' : 'var(--text-muted)' }}
-              >
-                {isActive ? 'RECORDING' : 'IDLE'}
-              </span>
-            </div>
-            <div className="hud-row">
-              <span className="hud-label">FPS / LATENCY</span>
-              <span className="hud-value">
-                {telemetry.fps > 0 ? telemetry.fps.toFixed(1) : '0.0'} FPS (
-                {telemetry.total_ms > 0 ? telemetry.total_ms.toFixed(1) : '0.0'} ms)
-              </span>
-            </div>
-            <div className="hud-row">
-              <span className="hud-label">PERSONNEL</span>
-              <span className="hud-value">
-                {totalTracked} (Comp: {compliantCount} | Viol: {nonCompliantCount})
-              </span>
-            </div>
-            {source && (
-              <div className="hud-row">
-                <span className="hud-label">SOURCE</span>
-                <span className="hud-value">{source}</span>
-              </div>
-            )}
-          </div>
+
         </div>
       </div>
     </div>

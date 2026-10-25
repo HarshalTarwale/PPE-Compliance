@@ -78,6 +78,29 @@ class TestFaceEmbeddingEngine:
         v_diff[1] = 1.0
         assert engine.is_match(v_ortho, v_diff, threshold=0.363) is False
 
+    def test_concurrent_multithreaded_detection(self, engine: FaceEmbeddingEngine):
+        """Verify thread-safety when detect_faces is called concurrently with different image shapes."""
+        import threading
+
+        errors = []
+
+        def worker(shape):
+            try:
+                for _ in range(15):
+                    dummy = np.zeros(shape, dtype=np.uint8)
+                    engine.detect_faces(dummy)
+            except Exception as exc:
+                errors.append(exc)
+
+        t1 = threading.Thread(target=worker, args=((480, 640, 3),))
+        t2 = threading.Thread(target=worker, args=((720, 1280, 3),))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(errors) == 0, f"Concurrent face detection failed with errors: {errors}"
+
 
 # ---------------------------------------------------------------------------
 # Storage Tests (Verifying NO Raw Images Stored)
@@ -235,3 +258,94 @@ class TestEmployeeRegistrationService:
 
         # Must strictly be None (do not automatically identify unknown people)
         assert match is None
+
+    def test_identify_rejects_ambiguous_margin(self, service: EmployeeRegistrationService):
+        """When two employees score closely (margin < 0.09), reject match as ambiguous."""
+        emb_a = np.random.randn(128).astype(np.float32)
+        emb_a = emb_a / np.linalg.norm(emb_a)
+        emb_b = np.random.randn(128).astype(np.float32)
+        emb_b = emb_b / np.linalg.norm(emb_b)
+
+        service.engine.extract_single_face_embedding.side_effect = [
+            (emb_a, "SUCCESS", 1),
+            (emb_b, "SUCCESS", 1),
+        ]
+        service.register_employee("EMP_A", "Alice", [np.zeros((100, 100, 3), dtype=np.uint8)])
+        service.register_employee("EMP_B", "Bob", [np.zeros((100, 100, 3), dtype=np.uint8)])
+
+        # Query scores 0.62 for Alice and 0.58 for Bob (margin = 0.04 < MATCH_MARGIN 0.09)
+        def mock_similarity(q, target):
+            if np.allclose(target, emb_a, atol=1e-5):
+                return 0.62
+            elif np.allclose(target, emb_b, atol=1e-5):
+                return 0.58
+            return 0.0
+
+        service.engine.compute_similarity.side_effect = mock_similarity
+
+        query_emb = np.random.randn(128).astype(np.float32)
+        match = service.identify(query_emb, threshold=0.50)
+        assert match is None, "Ambiguous match with margin < 0.09 must be rejected"
+
+    def test_identify_accepts_when_margin_is_sufficient(self, service: EmployeeRegistrationService):
+        """When the best match clearly outscores the runner-up (margin >= 0.09), accept."""
+        emb_a = np.random.randn(128).astype(np.float32)
+        emb_a = emb_a / np.linalg.norm(emb_a)
+        emb_b = np.random.randn(128).astype(np.float32)
+        emb_b = emb_b / np.linalg.norm(emb_b)
+
+        service.engine.extract_single_face_embedding.side_effect = [
+            (emb_a, "SUCCESS", 1),
+            (emb_b, "SUCCESS", 1),
+        ]
+        service.register_employee("EMP_A", "Alice", [np.zeros((100, 100, 3), dtype=np.uint8)])
+        service.register_employee("EMP_B", "Bob", [np.zeros((100, 100, 3), dtype=np.uint8)])
+
+        # Alice: 0.72, Bob: 0.55 (margin = 0.17 >= 0.09)
+        def mock_similarity(q, target):
+            if np.allclose(target, emb_a, atol=1e-5):
+                return 0.72
+            elif np.allclose(target, emb_b, atol=1e-5):
+                return 0.55
+            return 0.0
+
+        service.engine.compute_similarity.side_effect = mock_similarity
+
+        query_emb = np.random.randn(128).astype(np.float32)
+        match = service.identify(query_emb, threshold=0.50)
+        assert match is not None
+        assert match["employee_id"] == "EMP_A"
+        assert match["employee_name"] == "Alice"
+        assert match["similarity"] == 0.72
+
+    def test_identify_uses_mean_embedding_only(self, service: EmployeeRegistrationService):
+        """Verification must only compare against mean embedding, preventing single-sample score inflation."""
+        emb1 = np.random.randn(128).astype(np.float32)
+        emb1 = emb1 / np.linalg.norm(emb1)
+        emb2 = np.random.randn(128).astype(np.float32)
+        emb2 = emb2 / np.linalg.norm(emb2)
+
+        service.engine.extract_single_face_embedding.side_effect = [
+            (emb1, "SUCCESS", 1),
+            (emb2, "SUCCESS", 1),
+        ]
+        dummy = np.zeros((100, 100, 3), dtype=np.uint8)
+        service.register_employee("EMP_MULTI", "MultiSample", [dummy, dummy])
+
+        rec = service.storage.load_record("EMP_MULTI")
+        assert rec is not None
+        assert len(rec.sample_embeddings) == 2
+
+        service.engine.compute_similarity.reset_mock()
+        service.engine.compute_similarity.return_value = 0.85
+
+        query_emb = np.random.randn(128).astype(np.float32)
+        match = service.identify(query_emb, threshold=0.50)
+
+        # Ensure compute_similarity was called exactly ONCE per employee (mean only)
+        # and NOT called for individual samples
+        assert service.engine.compute_similarity.call_count == 1
+        called_target = service.engine.compute_similarity.call_args[0][1]
+        assert np.array_equal(called_target, rec.mean_embedding)
+        assert match is not None
+        assert match["employee_id"] == "EMP_MULTI"

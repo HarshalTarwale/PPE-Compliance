@@ -17,10 +17,13 @@ export class MonitoringWebSocketManager {
     this.isExplicitlyClosed = false;
     clearTimeout(this.reconnectTimer);
 
-    // Determine WebSocket URL from current browser location or configured env
+    // Determine WebSocket URL from configured env or direct backend port
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = import.meta.env.VITE_WS_URL || `${protocol}//${host}/ws/monitoring`;
+    const isDevPort = window.location.port === '5173';
+    const targetHost = isDevPort
+      ? `${window.location.hostname}:8000`
+      : window.location.host;
+    const wsUrl = import.meta.env.VITE_WS_URL || `${protocol}//${targetHost}/ws/monitoring`;
 
     try {
       this.ws = new WebSocket(wsUrl);

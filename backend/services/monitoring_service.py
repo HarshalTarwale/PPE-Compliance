@@ -54,6 +54,15 @@ class MonitoringService:
         # Connected WebSocket clients
         self._clients: Set[WebSocket] = set()
 
+        # Camera frame orientation (defaults to horizontally flipped / mirrored for natural webcam interaction)
+        self._flip_horizontal: bool = True
+        self._flip_vertical: bool = False
+
+        # Latest encoded JPEG frame for video streaming
+        self._latest_jpeg: Optional[bytes] = None
+        self._latest_raw_jpeg: Optional[bytes] = None
+        self._frame_lock = threading.Lock()
+
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Assign the active asyncio event loop for thread-safe WebSocket broadcasts."""
         self._event_loop = loop
@@ -98,6 +107,16 @@ class MonitoringService:
         with self._lock:
             return self._latest_status
 
+    def get_latest_frame_jpeg(self) -> Optional[bytes]:
+        """Fetch the most recent annotated JPEG frame bytes for video streaming."""
+        with self._frame_lock:
+            return self._latest_jpeg
+
+    def get_latest_raw_frame_jpeg(self) -> Optional[bytes]:
+        """Fetch the most recent unannotated raw camera frame as JPEG bytes."""
+        with self._frame_lock:
+            return self._latest_raw_jpeg
+
     def process_single_frame(
         self,
         frame: np.ndarray,
@@ -124,9 +143,19 @@ class MonitoringService:
     # Background Inference Worker Lifecycle
     # -----------------------------------------------------------------------
 
-    def start(self, source: Union[int, str] = 0) -> MonitoringControlResponse:
+    def start(
+        self,
+        source: Union[int, str] = 0,
+        flip_horizontal: Optional[bool] = None,
+        flip_vertical: Optional[bool] = None,
+    ) -> MonitoringControlResponse:
         """Launch inference in a dedicated background worker thread."""
         with self._lock:
+            if flip_horizontal is not None:
+                self._flip_horizontal = flip_horizontal
+            if flip_vertical is not None:
+                self._flip_vertical = flip_vertical
+
             if self._is_active and self._thread is not None and self._thread.is_alive():
                 return MonitoringControlResponse(
                     status="running",
@@ -146,12 +175,28 @@ class MonitoringService:
             )
             self._thread.start()
 
-        logger.info("Started background monitoring worker on source: %s", source)
+        logger.info("Started background monitoring worker on source: %s (flip_h=%s, flip_v=%s)", source, self._flip_horizontal, self._flip_vertical)
         return MonitoringControlResponse(
             status="running",
             source=str(source),
             message=f"Monitoring started on source: {source}",
         )
+
+    def set_flip(
+        self,
+        flip_horizontal: Optional[bool] = None,
+        flip_vertical: Optional[bool] = None,
+    ) -> Dict[str, bool]:
+        """Update camera orientation flip settings dynamically."""
+        with self._lock:
+            if flip_horizontal is not None:
+                self._flip_horizontal = flip_horizontal
+            if flip_vertical is not None:
+                self._flip_vertical = flip_vertical
+            return {
+                "flip_horizontal": self._flip_horizontal,
+                "flip_vertical": self._flip_vertical,
+            }
 
     def stop(self) -> MonitoringControlResponse:
         """Signal background worker to terminate and wait for clean shutdown."""
@@ -174,6 +219,10 @@ class MonitoringService:
             prev_source = self._source
             self._source = None
             self._latest_status = self._empty_status(source=None)
+
+        with self._frame_lock:
+            self._latest_jpeg = None
+            self._latest_raw_jpeg = None
 
         # Notify WebSockets of stopped state
         self._schedule_broadcast(self._latest_status)
@@ -203,6 +252,12 @@ class MonitoringService:
                 self._latest_status = self._empty_status(source=str(source))
             return
 
+        # Optimization: Minimize capture latency and match inference resolution
+        if isinstance(camera_source, int):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
         logger.info("Inference worker running on source: %s", source)
 
         try:
@@ -217,8 +272,31 @@ class MonitoringService:
                     time.sleep(0.05)
                     continue
 
-                # Run multi-stage pipeline (person det, tracking, PPE assoc, face, temporal, rules)
-                result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=False)
+                # Apply camera flip/mirror orientation if configured
+                with self._lock:
+                    flip_h = self._flip_horizontal
+                    flip_v = self._flip_vertical
+
+                if flip_h and flip_v:
+                    frame = cv2.flip(frame, -1)
+                elif flip_h:
+                    frame = cv2.flip(frame, 1)
+                elif flip_v:
+                    frame = cv2.flip(frame, 0)
+
+                # Encode raw frame (before annotations) for clean face enrollment snapshots
+                ret_raw, raw_buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+
+                # Run multi-stage pipeline with visual overlay enabled
+                result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=True)
+
+                display_frame = result.annotated_frame if result.annotated_frame is not None else frame
+                ret_enc, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                with self._frame_lock:
+                    if ret_enc:
+                        self._latest_jpeg = buffer.tobytes()
+                    if ret_raw:
+                        self._latest_raw_jpeg = raw_buf.tobytes()
 
                 status = self._build_status_response(
                     result, is_active=True, source=str(source)
@@ -237,6 +315,8 @@ class MonitoringService:
             logger.exception("Error in inference worker loop: %s", exc)
         finally:
             cap.release()
+            with self._frame_lock:
+                self._latest_jpeg = None
             with self._lock:
                 self._is_active = False
             logger.info("Video capture released for source: %s", source)

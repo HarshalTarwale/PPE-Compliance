@@ -48,7 +48,9 @@
   --radius-lg: 8px;
 }
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -67,7 +69,12 @@ body {
    Typography Utilities
    ========================================================================== */
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--text-main);
@@ -90,7 +97,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .main-content {
   flex: 1;
-  padding: 1.25rem 1.75rem 2.5rem;
+  padding: 1rem 1.5rem 1.5rem;
   max-width: 1600px;
   width: 100%;
   margin: 0 auto;
@@ -179,6 +186,31 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-main);
   background-color: var(--bg-surface);
   border-color: var(--border-strong);
+}
+
+.live-tab-badge {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-compliant);
+  box-shadow: 0 0 8px var(--color-compliant);
+  display: inline-block;
+  margin-left: 0.15rem;
+  animation: pulse-live 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-live {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
 }
 
 /* Header Telemetry Status Indicators */
@@ -362,6 +394,14 @@ h1, h2, h3, h4, h5, h6 {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+
+.viewport-stream-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background-color: #030712;
 }
 
 .viewport-idle-state {
@@ -640,6 +680,85 @@ h1, h2, h3, h4, h5, h6 {
   background-color: rgba(30, 41, 59, 0.7);
 }
 
+/* ==========================================================================
+   Camera Photo Capture Viewfinder (/register)
+   ========================================================================== */
+
+.camera-viewfinder-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 280px;
+  background-color: #030712;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.camera-face-guide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 170px;
+  height: 220px;
+  border: 2px dashed rgba(56, 189, 248, 0.85);
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(3, 7, 18, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-guide-text {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(15, 23, 42, 0.88);
+  border: 1px solid var(--border-default);
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.camera-shutter-flash {
+  position: absolute;
+  inset: 0;
+  background-color: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease-out;
+  z-index: 20;
+}
+
+.camera-shutter-flash.flashing {
+  opacity: 0.85;
+}
+
+.capture-btn-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.65rem;
+}
+
 .preview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
@@ -675,4 +794,114 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+/* ==========================================================================
+   Dedicated Live Feed Page Layout (Screen-Fit Responsive System)
+   ========================================================================== */
+
+.live-page-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 1rem;
+  height: calc(100vh - 100px);
+  min-height: 520px;
+}
+
+@media (max-width: 1100px) {
+  .live-page-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: unset;
+  }
+}
+
+.live-viewport-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.live-viewport-col .panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.live-viewport-col .panel-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.65rem;
+  justify-content: center;
+  align-items: center;
+}
+
+.live-viewport-col .viewport-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: calc(100vh - 175px);
+  aspect-ratio: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #030712;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--border-default);
+}
+
+.live-viewport-col .viewport-stream-img,
+.live-viewport-col .viewport-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.live-sidebar-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.live-sidebar-col .panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.live-sidebar-col .panel-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-app);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

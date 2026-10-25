@@ -168,6 +168,11 @@ def mock_monitoring_service() -> MagicMock:
         message="Monitoring stopped successfully.",
     )
 
+    service.set_flip.return_value = {
+        "flip_horizontal": True,
+        "flip_vertical": False,
+    }
+
     # Fake pipeline attributes for /health
     pipeline_mock = MagicMock()
     pipeline_mock.detector.model = "yolov8n_loaded"
@@ -360,6 +365,25 @@ class TestMonitoringEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "stopped"
+
+    def test_toggle_camera_flip(self, client: TestClient):
+        response = client.post("/monitoring/flip", json={"flip_horizontal": True, "flip_vertical": False})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["flip_horizontal"] is True
+        assert data["flip_vertical"] is False
+
+    def test_get_camera_snapshot_success(self, client: TestClient, mock_monitoring_service: MagicMock):
+        mock_monitoring_service.get_latest_raw_frame_jpeg.return_value = b"\xff\xd8\xff\xe0fake_jpeg"
+        response = client.get("/monitoring/snapshot?raw=true")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.content == b"\xff\xd8\xff\xe0fake_jpeg"
+
+    def test_get_camera_snapshot_not_found(self, client: TestClient, mock_monitoring_service: MagicMock):
+        mock_monitoring_service.get_latest_raw_frame_jpeg.return_value = None
+        response = client.get("/monitoring/snapshot?raw=true")
+        assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

@@ -36,7 +36,9 @@ async def get_health(request: Request) -> HealthResponse:
     if monitoring_service and monitoring_service.pipeline and monitoring_service.pipeline.face_service:
         engine = monitoring_service.pipeline.face_service.engine
         face_models_loaded = (
-            engine is not None and engine.yunet_model is not None and engine.sface_model is not None
+            engine is not None
+            and getattr(engine, "detector", None) is not None
+            and getattr(engine, "recognizer", None) is not None
         )
 
     return HealthResponse(

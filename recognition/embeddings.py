@@ -22,6 +22,7 @@ Pipeline:
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -133,6 +134,7 @@ class FaceEmbeddingEngine:
             model=str(self.sface_path),
             config="",
         )
+        self._lock = threading.Lock()
 
     # -----------------------------------------------------------------------
     # Detection & Alignment
@@ -150,10 +152,19 @@ class FaceEmbeddingEngine:
         if image is None or image.size == 0:
             return []
 
-        h, w = image.shape[:2]
-        self.detector.setInputSize((w, h))
+        if not image.flags['C_CONTIGUOUS']:
+            image = np.ascontiguousarray(image)
 
-        _, faces = self.detector.detect(image)
+        h, w = image.shape[:2]
+
+        with self._lock:
+            self.detector.setInputSize((w, h))
+            try:
+                _, faces = self.detector.detect(image)
+            except cv2.error as err:
+                logger.warning("FaceDetectorYN detect failed on image (%dx%d): %s", w, h, err)
+                return []
+
         if faces is None or len(faces) == 0:
             return []
 
@@ -202,7 +213,10 @@ class FaceEmbeddingEngine:
         Returns:
             Aligned and cropped 112x112 BGR face image.
         """
-        aligned_face = self.recognizer.alignCrop(image, face.raw_array)
+        if not image.flags['C_CONTIGUOUS']:
+            image = np.ascontiguousarray(image)
+        with self._lock:
+            aligned_face = self.recognizer.alignCrop(image, face.raw_array)
         return aligned_face
 
     def compute_embedding(self, image: np.ndarray, face: FaceDetection) -> np.ndarray:
@@ -216,7 +230,8 @@ class FaceEmbeddingEngine:
             1D numpy float32 array of shape (128,) with unit L2 norm.
         """
         aligned = self.align_and_crop(image, face)
-        raw_feature = self.recognizer.feature(aligned)  # shape (1, 128)
+        with self._lock:
+            raw_feature = self.recognizer.feature(aligned)  # shape (1, 128)
         feature = raw_feature.flatten().astype(np.float32)
 
         # Ensure unit L2 norm
@@ -243,6 +258,19 @@ class FaceEmbeddingEngine:
               - If 0 faces: (None, 'NO_FACE_DETECTED', 0)
               - If >1 faces: (None, 'MULTIPLE_FACES_DETECTED', n)
         """
+        if image is None or image.size == 0:
+            return None, "NO_FACE_DETECTED", 0
+
+        # Downscale oversized enrollment photos (e.g. 4000x3000 smartphone photos)
+        # to max 1920px for reliable and fast DNN inference.
+        h, w = image.shape[:2]
+        max_dim = 1920
+        if max(h, w) > max_dim:
+            scale = max_dim / float(max(h, w))
+            new_w = int(round(w * scale))
+            new_h = int(round(h * scale))
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
         faces = self.detect_faces(image)
         count = len(faces)
 

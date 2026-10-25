@@ -54,6 +54,15 @@ class MonitoringControlRequest(BaseModel):
     """Schema for POST /monitoring/start control request."""
 
     source: Union[int, str] = Field(0, description="Camera index (e.g. 0) or path to video file")
+    flip_horizontal: bool = Field(True, description="Flip camera horizontally (mirror mode)")
+    flip_vertical: bool = Field(False, description="Flip camera vertically")
+
+
+class MonitoringFlipRequest(BaseModel):
+    """Schema for POST /monitoring/flip control request."""
+
+    flip_horizontal: Optional[bool] = Field(None, description="Flip camera horizontally (mirror mode)")
+    flip_vertical: Optional[bool] = Field(None, description="Flip camera vertically")
 
 
 class MonitoringControlResponse(BaseModel):

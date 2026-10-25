@@ -17,6 +17,24 @@ An end-to-end automated Personal Protective Equipment (PPE) detection and safety
 
 ---
 
+## Quick Start (One-Click Launch)
+
+On Windows, double-click **`start.bat`** (or run `.\start.bat` from terminal):
+
+```cmd
+start.bat
+```
+
+This single command will automatically:
+1. Validate dependencies in `.venv` and `frontend/node_modules`.
+2. Start the **FastAPI Backend Server** on `http://127.0.0.1:8000`.
+3. Start the **React Dashboard** on `http://localhost:5173`.
+4. Open your default browser directly to the dashboard.
+
+To shut down all running servers, run **`stop.bat`**.
+
+---
+
 ## 1. Installation
 
 ### Prerequisites

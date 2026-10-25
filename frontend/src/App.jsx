@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
+import LiveFeedPage from './pages/LiveFeedPage';
 import DashboardPage from './pages/DashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
 import RegisterPage from './pages/RegisterPage';
@@ -9,10 +10,11 @@ import { ISOLATED_DEV_MOCK_STATUS } from './api/mockData';
 import './styles/index.css';
 
 export default function App() {
-  // Navigation: sync with pathname (/dashboard, /employees, /register)
+  // Navigation: sync with pathname (/live, /dashboard, /employees, /register)
   const getTabFromPath = () => {
     const path = window.location.pathname.toLowerCase();
-    if (path.includes('employee')) return 'employees';
+    if (path.includes('live') || path.includes('stream') || path.includes('camera')) return 'live';
+    if (path.includes('employee') || path.includes('personnel')) return 'employees';
     if (path.includes('register')) return 'register';
     return 'dashboard';
   };
@@ -74,7 +76,7 @@ export default function App() {
   }, [isMockMode]);
 
   // Stream controls
-  const handleStartStream = async (source = 0) => {
+  const handleStartStream = async (source = 0, flipHorizontal = true, flipVertical = false) => {
     setIsStreamLoading(true);
     if (isMockMode) {
       setTimeout(() => {
@@ -89,7 +91,7 @@ export default function App() {
     }
 
     try {
-      await startMonitoring(source);
+      await startMonitoring(source, flipHorizontal, flipVertical);
       const updated = await fetchMonitoringStatus();
       setMonitoringStatus(updated);
     } catch (err) {
@@ -144,12 +146,19 @@ export default function App() {
       />
 
       <main className="main-content">
-        {activeTab === 'dashboard' && (
-          <DashboardPage
+        {activeTab === 'live' && (
+          <LiveFeedPage
             monitoringStatus={monitoringStatus}
             onStartStream={handleStartStream}
             onStopStream={handleStopStream}
             isStreamLoading={isStreamLoading}
+          />
+        )}
+
+        {activeTab === 'dashboard' && (
+          <DashboardPage
+            monitoringStatus={monitoringStatus}
+            onNavigateLive={() => navigateTo('live')}
           />
         )}
 

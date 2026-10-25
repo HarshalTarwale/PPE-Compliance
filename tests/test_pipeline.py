@@ -486,3 +486,81 @@ class TestPPECompliancePipeline:
         assert d["persons"][0]["track_id"] == "track_1"
         assert "telemetry" in d
         assert "fps" in d["telemetry"]
+
+    def test_multiple_persons_never_assigned_duplicate_identity(self):
+        """When two persons both match the same employee, only the best match retains it."""
+        detections = [
+            make_person_det(50, 50, 200, 400, conf=0.95),
+            make_person_det(250, 50, 400, 400, conf=0.90),
+        ]
+        mock_face_service = MagicMock(spec=EmployeeRegistrationService)
+        # First call has higher similarity (0.85), second call has lower similarity (0.60), both claim EMP101
+        mock_face_service.identify.side_effect = [
+            {"employee_id": "EMP101", "employee_name": "Alice Smith", "similarity": 0.85},
+            {"employee_id": "EMP101", "employee_name": "Alice Smith", "similarity": 0.60},
+        ]
+        mock_detector = MagicMock(spec=PPEDetector)
+        mock_detector.detect.return_value = DetectionResult(detections=detections)
+
+        pipeline = PPECompliancePipeline(
+            detector=mock_detector,
+            face_service=mock_face_service,
+        )
+        frame = make_dummy_frame()
+        res = pipeline.process_frame(frame)
+
+        assert res.total_tracked == 2
+        assigned_ids = [r.employee_id for r in res.records]
+        assert assigned_ids.count("EMP101") == 1
+        assert assigned_ids.count("UNKNOWN") == 1
+
+    def test_reverification_grace_period_and_revocation(self):
+        """Transient missed faces preserve identity; 3 consecutive failures revoke to UNKNOWN."""
+        det = make_person_det(50, 50, 200, 400, conf=0.95)
+        mock_detector = MagicMock(spec=PPEDetector)
+        mock_detector.detect.return_value = DetectionResult(detections=[det])
+
+        mock_face_service = MagicMock(spec=EmployeeRegistrationService)
+        call_count = 0
+
+        def mock_identify(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call succeeds as Alice
+            if call_count == 1:
+                return {"employee_id": "EMP101", "employee_name": "Alice Smith", "similarity": 0.85}
+            # All subsequent re-checks return None (missed face)
+            return None
+
+        mock_face_service.identify.side_effect = mock_identify
+
+        # Use face_check_interval=1 so verified recheck_interval = 6 frames
+        pipeline = PPECompliancePipeline(
+            detector=mock_detector,
+            face_service=mock_face_service,
+            face_check_interval=1,
+        )
+        frame = make_dummy_frame()
+
+        # Frame 0: Identified as Alice
+        res0 = pipeline.process_frame(frame)
+        assert res0.records[0].employee_id == "EMP101"
+
+        # Advance 6 frames to trigger 1st re-check (returns None)
+        for _ in range(6):
+            res = pipeline.process_frame(frame)
+        # 1st failed recheck: Grace period keeps Alice
+        assert res.records[0].employee_id == "EMP101"
+
+        # Advance another 6 frames to trigger 2nd re-check (returns None)
+        for _ in range(6):
+            res = pipeline.process_frame(frame)
+        # 2nd failed recheck: Grace period still keeps Alice
+        assert res.records[0].employee_id == "EMP101"
+
+        # Advance another 6 frames to trigger 3rd re-check (returns None)
+        for _ in range(6):
+            res = pipeline.process_frame(frame)
+        # 3rd failed recheck: Revoked back to UNKNOWN
+        assert res.records[0].employee_id == "UNKNOWN"
+

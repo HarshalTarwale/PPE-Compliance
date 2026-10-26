@@ -50,7 +50,11 @@ export default function RegisterPage({ onNavigateEmployees, isMockMode }) {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (e) {
+          console.warn('Video play deferred:', e);
+        }
       }
       setIsCameraActive(true);
       setCameraError(null);
@@ -58,7 +62,7 @@ export default function RegisterPage({ onNavigateEmployees, isMockMode }) {
       console.warn('Browser webcam getUserMedia error:', err);
       setIsCameraActive(false);
       setCameraError(
-        'Webcam is connected via the system stream. You can snap directly below.'
+        'Please allow browser camera permissions (click the lock/tune icon in your browser URL bar).'
       );
     }
   };
@@ -410,18 +414,47 @@ export default function RegisterPage({ onNavigateEmployees, isMockMode }) {
               {captureMode === 'camera' && (
                 <div>
                   <div className="camera-viewfinder-box">
-                    {isCameraActive ? (
-                      <video ref={videoRef} className="camera-video-element" autoPlay playsInline muted />
-                    ) : (
-                      <img
-                        src="http://127.0.0.1:8000/monitoring/video_feed"
-                        className="camera-video-element"
-                        alt="Live Camera View"
-                        style={{ transform: 'none' }}
-                        onError={(e) => {
-                          e.target.style.display = 'none';
+                    <video
+                      ref={videoRef}
+                      className="camera-video-element"
+                      autoPlay
+                      playsInline
+                      muted
+                      style={{
+                        display: isCameraActive ? 'block' : 'none',
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                      }}
+                    />
+                    {!isCameraActive && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          height: '100%',
+                          padding: '1.5rem',
+                          textAlign: 'center',
+                          color: 'var(--text-muted)',
+                          gap: '0.65rem',
                         }}
-                      />
+                      >
+                        <Camera size={36} style={{ opacity: 0.7 }} />
+                        <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                          Webcam not active or permission pending
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={startCamera}
+                          style={{ marginTop: '0.25rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        >
+                          <Camera size={14} />
+                          <span>Enable Browser Camera</span>
+                        </button>
+                      </div>
                     )}
                     <div className="camera-face-guide" />
                     <div className="camera-guide-text">

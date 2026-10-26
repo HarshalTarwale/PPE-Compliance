@@ -244,33 +244,53 @@ class MonitoringService:
         if isinstance(source, str) and source.isdigit():
             camera_source = int(source)
 
+        is_simulation = False
+        fallback_img_path = _PROJECT_ROOT / "outputs" / "pipeline_test.jpg"
+
         cap = cv2.VideoCapture(camera_source)
         if not cap.isOpened():
-            logger.error("Could not open video source: %s", source)
-            with self._lock:
-                self._is_active = False
-                self._latest_status = self._empty_status(source=str(source))
-            return
+            if fallback_img_path.exists():
+                logger.warning(
+                    "Physical camera source %s not available (headless cloud environment). "
+                    "Running live monitoring loop using simulation test frame: %s",
+                    source,
+                    fallback_img_path.name,
+                )
+                is_simulation = True
+            else:
+                logger.error("Could not open video source: %s", source)
+                with self._lock:
+                    self._is_active = False
+                    self._latest_status = self._empty_status(source=str(source))
+                return
 
         # Optimization: Minimize capture latency and match inference resolution
-        if isinstance(camera_source, int):
+        if not is_simulation and isinstance(camera_source, int):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        logger.info("Inference worker running on source: %s", source)
+        logger.info("Inference worker running on source: %s (simulation=%s)", source, is_simulation)
+
+        sim_frame = cv2.imread(str(fallback_img_path)) if is_simulation else None
 
         try:
             while not self._stop_event.is_set():
-                ret, frame = cap.read()
-                if not ret or frame is None:
-                    # If reading a file, loop back or terminate
-                    if isinstance(source, str) and not source.isdigit():
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                if is_simulation:
+                    time.sleep(1.0 / 25.0)  # Simulate 25 FPS stream rate on cloud
+                    frame = sim_frame.copy() if sim_frame is not None else None
+                    if frame is None:
                         continue
-                    # For camera, wait briefly before retrying
-                    time.sleep(0.05)
-                    continue
+                else:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        # If reading a file, loop back or terminate
+                        if isinstance(source, str) and not source.isdigit():
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            continue
+                        # For camera, wait briefly before retrying
+                        time.sleep(0.05)
+                        continue
 
                 # Apply camera flip/mirror orientation if configured
                 with self._lock:

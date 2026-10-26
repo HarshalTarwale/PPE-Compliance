@@ -1,8 +1,0 @@
-{
-  "employee_id": "EMP105",
-  "employee_name": "Sarah Connor",
-  "registered_at": "2026-10-21T22:00:46.363192",
-  "sample_count": 4,
-  "embedding_dim": 128,
-  "metadata": {}
-}

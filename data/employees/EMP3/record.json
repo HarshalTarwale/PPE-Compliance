@@ -1,0 +1,8 @@
+{
+  "employee_id": "EMP3",
+  "employee_name": "Kshitij Panday",
+  "registered_at": "2026-10-26T12:30:24.540854",
+  "sample_count": 1,
+  "embedding_dim": 128,
+  "metadata": {}
+}

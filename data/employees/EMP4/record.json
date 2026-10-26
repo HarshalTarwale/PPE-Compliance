@@ -1,0 +1,8 @@
+{
+  "employee_id": "EMP4",
+  "employee_name": "Harshal",
+  "registered_at": "2026-10-26T14:17:23.147536",
+  "sample_count": 2,
+  "embedding_dim": 128,
+  "metadata": {}
+}

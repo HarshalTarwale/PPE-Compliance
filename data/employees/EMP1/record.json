@@ -1,8 +1,8 @@
 {
   "employee_id": "EMP1",
   "employee_name": "Bharat Digrase",
-  "registered_at": "2026-10-21T19:30:44.292138",
-  "sample_count": 3,
+  "registered_at": "2026-10-26T11:50:54.115378",
+  "sample_count": 4,
   "embedding_dim": 128,
   "metadata": {}
 }

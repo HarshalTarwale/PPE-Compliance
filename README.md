@@ -6,8 +6,16 @@ An end-to-end automated Personal Protective Equipment (PPE) detection and safety
 
 ---
 
+> 🚀 **DEMONSTRATION & VIVA PREPARATION:**
+> - 🗣️ **[What_To_Tell_Mam_Tomorrow_Demonstration_Script.docx](What_To_Tell_Mam_Tomorrow_Demonstration_Script.docx)** — Word-for-word spoken speech script, live demo actions, and viva answers.
+> - 📄 **[PPE_Compliance_Project_Demonstration_Guide.docx](PPE_Compliance_Project_Demonstration_Guide.docx)** — Complete formatted project & architecture report.
+> - 📖 **[DEMO_README.md](DEMO_README.md)** — Master demonstration guide, accuracy metrics, and tech breakdown.
+
+---
+
 ## Architecture & Documentation Index
 
+- [Project Demonstration & Viva Guide](DEMO_README.md) — Master demonstration script, live accuracy evaluation, and viva defense guide.
 - [System Architecture](docs/system_architecture.md) — Comprehensive subsystem breakdown and component boundaries.
 - [Data Flow Specification](docs/data_flow.md) — Exact data structures, coordinate spaces, and sequence diagrams.
 - [Model Evaluation Report](docs/evaluation.md) — Empirical precision, recall, mAP, and latency benchmark results.

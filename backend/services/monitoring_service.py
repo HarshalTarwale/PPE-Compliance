@@ -64,6 +64,7 @@ class MonitoringService:
         # Latest encoded JPEG frame for video streaming
         self._latest_jpeg: Optional[bytes] = None
         self._latest_raw_jpeg: Optional[bytes] = None
+        self._frame_id: int = 0
         self._frame_lock = threading.Lock()
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -114,6 +115,11 @@ class MonitoringService:
         """Fetch the most recent annotated JPEG frame bytes for video streaming."""
         with self._frame_lock:
             return self._latest_jpeg
+
+    def get_latest_frame_info(self) -> tuple[Optional[bytes], int]:
+        """Fetch the most recent annotated JPEG frame bytes and unique frame sequence counter."""
+        with self._frame_lock:
+            return self._latest_jpeg, self._frame_id
 
     def get_latest_raw_frame_jpeg(self) -> Optional[bytes]:
         """Fetch the most recent unannotated raw camera frame as JPEG bytes."""
@@ -249,7 +255,15 @@ class MonitoringService:
 
         is_simulation = False
         fallback_img_path: Optional[Path] = None
-        cap = cv2.VideoCapture(camera_source)
+
+        # On Windows, try DirectShow (CAP_DSHOW) for zero-buffer instant camera capture
+        if isinstance(camera_source, int):
+            cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(camera_source)
+        else:
+            cap = cv2.VideoCapture(camera_source)
+
         if not cap.isOpened():
             fallback_img_path = _PROJECT_ROOT / "outputs" / "pipeline_test.jpg"
             if fallback_img_path.exists():
@@ -276,6 +290,7 @@ class MonitoringService:
         logger.info("Inference worker running on source: %s (simulation=%s)", source, is_simulation)
 
         sim_frame = cv2.imread(str(fallback_img_path)) if is_simulation else None
+        frame_idx = 0
 
         try:
             while not self._stop_event.is_set():
@@ -292,8 +307,10 @@ class MonitoringService:
                             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                             continue
                         # For camera, wait briefly before retrying
-                        time.sleep(0.05)
+                        time.sleep(0.01)
                         continue
+
+                frame_idx += 1
 
                 # Apply camera flip/mirror orientation if configured
                 with self._lock:
@@ -307,19 +324,27 @@ class MonitoringService:
                 elif flip_v:
                     frame = cv2.flip(frame, 0)
 
-                # Encode raw frame (before annotations) for clean face enrollment snapshots
-                ret_raw, raw_buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-
                 # Run multi-stage pipeline with visual overlay enabled
                 result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=True)
 
                 display_frame = result.annotated_frame if result.annotated_frame is not None else frame
-                ret_enc, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                
+                # Fast JPEG compression (Quality 60 gives instant network transfer and eliminates lag)
+                ret_enc, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                
+                # Raw frame for snapshots (encode only every 10 frames to save CPU)
+                raw_bytes = None
+                if frame_idx % 10 == 0:
+                    ret_raw, raw_buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                    if ret_raw:
+                        raw_bytes = raw_buf.tobytes()
+
                 with self._frame_lock:
                     if ret_enc:
                         self._latest_jpeg = buffer.tobytes()
-                    if ret_raw:
-                        self._latest_raw_jpeg = raw_buf.tobytes()
+                        self._frame_id += 1
+                    if raw_bytes is not None:
+                        self._latest_raw_jpeg = raw_bytes
 
                 status = self._build_status_response(
                     result, is_active=True, source=str(source)
@@ -330,9 +355,6 @@ class MonitoringService:
 
                 # Broadcast structured telemetry & compliance state
                 self._schedule_broadcast(status)
-
-                # Regulate loop rate (~30 FPS max)
-                time.sleep(0.01)
 
         except Exception as exc:
             logger.exception("Error in inference worker loop: %s", exc)

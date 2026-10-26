@@ -122,16 +122,18 @@ async def get_video_feed(request: Request):
     service = get_monitoring_service(request)
 
     async def frame_stream():
+        last_frame_id = -1
         while True:
             if await request.is_disconnected():
                 break
-            jpeg_bytes = service.get_latest_frame_jpeg()
-            if jpeg_bytes is not None:
+            jpeg_bytes, frame_id = service.get_latest_frame_info()
+            if jpeg_bytes is not None and frame_id != last_frame_id:
+                last_frame_id = frame_id
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
                 )
-            await asyncio.sleep(0.033)
+            await asyncio.sleep(0.005)
 
     return StreamingResponse(
         frame_stream(),

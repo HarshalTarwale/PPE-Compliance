@@ -13,7 +13,10 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 import cv2
 import numpy as np
@@ -245,10 +248,10 @@ class MonitoringService:
             camera_source = int(source)
 
         is_simulation = False
-        fallback_img_path = _PROJECT_ROOT / "outputs" / "pipeline_test.jpg"
-
+        fallback_img_path: Optional[Path] = None
         cap = cv2.VideoCapture(camera_source)
         if not cap.isOpened():
+            fallback_img_path = _PROJECT_ROOT / "outputs" / "pipeline_test.jpg"
             if fallback_img_path.exists():
                 logger.warning(
                     "Physical camera source %s not available (headless cloud environment). "

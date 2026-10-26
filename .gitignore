@@ -23,9 +23,7 @@ env/
 Thumbs.db
 .DS_Store
 
-# ML artifacts
-*.pt
-*.onnx
+# ML artifacts (ignore temporary or heavy runs)
 *.engine
 *.tflite
 runs/
@@ -38,8 +36,10 @@ data/processed/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
-# Models (keep folder structure, ignore weight files)
-models/weights/
+# Models: track only required production weights (<50MB total)
+!models/weights/best.pt
+!models/weights/ppe_5class_best.pt
+!models/face/*.onnx
 !models/.gitkeep
 !models/weights/.gitkeep
 

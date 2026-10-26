@@ -43,9 +43,10 @@ data/processed/
 !models/.gitkeep
 !models/weights/.gitkeep
 
-# Outputs (reports)
+# Outputs (reports & fallback test image)
 outputs/
 !outputs/.gitkeep
+!outputs/pipeline_test.jpg
 
 # Logs
 logs/

@@ -225,7 +225,7 @@ export default function LiveMonitoring({
         <div className="viewport-container">
           {isActive ? (
             <img
-              src="http://127.0.0.1:8000/monitoring/video_feed"
+              src={`${import.meta.env.VITE_API_URL || ''}/monitoring/video_feed`}
               alt="Live Camera Feed"
               className="viewport-stream-img"
               onError={(e) => {

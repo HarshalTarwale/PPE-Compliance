@@ -304,7 +304,14 @@ class PPECompliancePipeline:
             face_check_interval: How often (in frames) to re-evaluate face identity per track.
         """
         # Lazy/default component instantiation
-        self.detector = detector or PPEDetector(device="auto")
+        if detector is None:
+            from detection.detector import DEFAULT_ONNX_MODEL, resolve_detector_backend
+
+            if resolve_detector_backend() == "onnx":
+                detector = PPEDetector(model_path=DEFAULT_ONNX_MODEL, device="cpu")
+            else:
+                detector = PPEDetector(device="auto")
+        self.detector = detector
         self.associator = associator or PPEAssociator()
         self.face_service = face_service or EmployeeRegistrationService()
         self.compliance_engine = compliance_engine or ComplianceEngine()

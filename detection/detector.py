@@ -9,7 +9,9 @@ Separates detection/inference logic from any UI/camera capture code.
 
 from __future__ import annotations
 
+import ast
 import logging
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -110,6 +112,28 @@ class DetectionResult:
 # ---------------------------------------------------------------------------
 
 
+DEFAULT_ONNX_MODEL = "models/weights/best_5class.onnx"
+
+
+def resolve_detector_backend() -> str:
+    """Pick 'onnx' or 'torch' for the detector.
+
+    PPE_DETECTOR_BACKEND overrides. Otherwise, use the lightweight ONNX Runtime
+    backend on Render (free instances have 512 MB RAM, and PyTorch alone needs
+    more than that) or when PyTorch/Ultralytics are not installed.
+    """
+    env = os.getenv("PPE_DETECTOR_BACKEND", "").strip().lower()
+    if env in ("onnx", "torch"):
+        return env
+    if os.getenv("RENDER"):
+        return "onnx"
+    import importlib.util
+
+    if importlib.util.find_spec("ultralytics") is None or importlib.util.find_spec("torch") is None:
+        return "onnx"
+    return "torch"
+
+
 class PPEDetector:
     """High-performance YOLOv8 PPE detector."""
 
@@ -149,6 +173,11 @@ class PPEDetector:
         self.confidence = float(confidence)
         self.iou = float(iou)
         self.imgsz = int(imgsz)
+        self.backend = "onnx" if self.model_path.suffix.lower() == ".onnx" else "torch"
+
+        if self.backend == "onnx":
+            self._init_onnx()
+            return
 
         # Resolve device
         if device == "auto":
@@ -216,6 +245,9 @@ class PPEDetector:
         h, w = frame.shape[:2]
         conf = confidence if confidence is not None else self.confidence
 
+        if self.backend == "onnx":
+            return self._detect_onnx(frame, conf)
+
         t0 = time.perf_counter()
 
         # Run Ultralytics inference
@@ -278,6 +310,113 @@ class PPEDetector:
             postprocess_ms=round(post, 2),
             total_latency_ms=round(total, 2),
             fps=fps,
+            orig_shape=(h, w),
+        )
+
+    # -----------------------------------------------------------------------
+    # ONNX Runtime backend (no PyTorch needed; low memory for cloud hosting)
+    # -----------------------------------------------------------------------
+
+    def _init_onnx(self) -> None:
+        import onnxruntime as ort  # type: ignore
+
+        opts = ort.SessionOptions()
+        # Render free instances get a fraction of one CPU; extra threads only add overhead
+        threads = int(os.getenv("ONNX_THREADS") or (1 if os.getenv("RENDER") else 0))
+        if threads > 0:
+            opts.intra_op_num_threads = threads
+        opts.inter_op_num_threads = 1
+        self.session = ort.InferenceSession(
+            str(self.model_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        self.device = "cpu"
+        self.half = False
+        self.model = None
+        self._input_name = self.session.get_inputs()[0].name
+        in_shape = self.session.get_inputs()[0].shape
+        if isinstance(in_shape[2], int):
+            self.imgsz = int(in_shape[2])
+
+        meta = self.session.get_modelmeta().custom_metadata_map
+        self.names = {}
+        if "names" in meta:
+            try:
+                self.names = {int(k): str(v) for k, v in ast.literal_eval(meta["names"]).items()}
+            except (ValueError, SyntaxError):
+                self.names = {}
+        logger.info(
+            "Loaded ONNX detector '%s' (onnxruntime, cpu) with %d classes",
+            self.model_path.name,
+            len(self.names),
+        )
+
+    def _detect_onnx(self, frame: np.ndarray, conf: float) -> DetectionResult:
+        h, w = frame.shape[:2]
+        size = self.imgsz
+
+        # Letterbox resize (same as Ultralytics: keep aspect ratio, pad with 114)
+        t0 = time.perf_counter()
+        r = min(size / h, size / w)
+        new_w, new_h = int(round(w * r)), int(round(h * r))
+        pad_x, pad_y = (size - new_w) / 2.0, (size - new_h) / 2.0
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        top, left = int(round(pad_y - 0.1)), int(round(pad_x - 0.1))
+        padded = cv2.copyMakeBorder(
+            resized, top, size - new_h - top, left, size - new_w - left,
+            cv2.BORDER_CONSTANT, value=(114, 114, 114),
+        )
+        blob = cv2.dnn.blobFromImage(padded, 1.0 / 255.0, swapRB=True)
+        t1 = time.perf_counter()
+
+        out = self.session.run(None, {self._input_name: blob})[0]
+        t2 = time.perf_counter()
+
+        # Output: [1, 4 + num_classes, N] -> [N, 4 + num_classes]
+        preds = out[0].T
+        class_scores = preds[:, 4:]
+        class_ids = class_scores.argmax(axis=1)
+        scores = class_scores[np.arange(len(class_ids)), class_ids]
+        keep = scores >= conf
+        preds, class_ids, scores = preds[keep], class_ids[keep], scores[keep]
+
+        detections: List[Detection] = []
+        if len(scores) > 0:
+            cx, cy, bw, bh = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
+            x1 = (cx - bw / 2 - left) / r
+            y1 = (cy - bh / 2 - top) / r
+            x2 = (cx + bw / 2 - left) / r
+            y2 = (cy + bh / 2 - top) / r
+
+            # Class-aware NMS: shift each class far apart so classes never suppress each other
+            offset = class_ids.astype(np.float32) * 4096.0
+            nms_boxes = np.stack([x1 + offset, y1, x2 - x1, y2 - y1], axis=1).tolist()
+            idxs = cv2.dnn.NMSBoxes(nms_boxes, scores.astype(float).tolist(), conf, self.iou)
+            idxs = np.array(idxs, dtype=int).reshape(-1)[:300]
+
+            for i in idxs:
+                c_id = int(class_ids[i])
+                detections.append(
+                    Detection(
+                        x1=max(0, int(round(x1[i]))),
+                        y1=max(0, int(round(y1[i]))),
+                        x2=min(w, int(round(x2[i]))),
+                        y2=min(h, int(round(y2[i]))),
+                        class_id=c_id,
+                        class_name=self.names.get(c_id, f"class_{c_id}"),
+                        confidence=float(scores[i]),
+                    )
+                )
+        t3 = time.perf_counter()
+
+        prep, infer, post = (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000
+        total = prep + infer + post
+        return DetectionResult(
+            detections=detections,
+            preprocess_ms=round(prep, 2),
+            inference_ms=round(infer, 2),
+            postprocess_ms=round(post, 2),
+            total_latency_ms=round(total, 2),
+            fps=round(1000.0 / total, 1) if total > 0 else 0.0,
             orig_shape=(h, w),
         )
 

@@ -246,6 +246,19 @@ Dashboard is live at `http://localhost:5173`.
 2. `/employees` — Personnel database catalog, search filtering, and deletion controls.
 3. `/register` — Biometric enrollment form with drag-and-drop face image uploads and instant previews.
 
+### Cloud Deployment (Render)
+The backend also serves the dashboard, so the whole app is available from the Render URL
+(e.g. `https://ppe-compliance-backend-dpzr.onrender.com/live`). The built site lives in
+`backend/static/`. **After changing anything in `frontend/`, rebuild and commit it:**
+
+```bash
+cd frontend
+npm run build:render   # writes ../backend/static
+```
+
+On Render the detector runs with ONNX Runtime (`models/weights/best_5class.onnx`) to stay
+within the free tier's 512 MB RAM, and the Live page uses the viewer's own webcam.
+
 ---
 
 ## 9. Benchmarking

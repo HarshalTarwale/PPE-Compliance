@@ -123,9 +123,42 @@ def create_app(
         allow_headers=["*"],
     )
 
+    # -----------------------------------------------------------------------
+    # Dashboard website (built React app in backend/static, if present)
+    # -----------------------------------------------------------------------
+    # Lets the backend host the whole site on one URL (e.g. on Render), with no
+    # separate frontend host. Build it with: cd frontend && npm run build:render
+    static_dir = Path(__file__).resolve().parent / "static"
+    index_file = static_dir / "index.html"
+    spa_paths = {"/", "/live", "/dashboard", "/employees", "/register",
+                 "/personnel", "/stream", "/camera"}
+
+    @app.middleware("http")
+    async def serve_dashboard(request: Request, call_next):
+        from fastapi.responses import FileResponse
+
+        if request.method == "GET" and index_file.is_file():
+            path = request.url.path.rstrip("/") or "/"
+            # Browser page loads (Accept: text/html) get the app; API calls like
+            # fetch('/employees') keep getting JSON.
+            if path in spa_paths and "text/html" in request.headers.get("accept", ""):
+                return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
+            # Built assets and top-level files (favicon.svg, ...)
+            candidate = (static_dir / path.lstrip("/")).resolve()
+            if (
+                path != "/"
+                and candidate.is_file()
+                and static_dir.resolve() in candidate.parents
+            ):
+                return FileResponse(candidate)
+        return await call_next(request)
+
     @app.get("/", include_in_schema=False)
-    async def root() -> JSONResponse:
-        from fastapi.responses import RedirectResponse
+    async def root():
+        from fastapi.responses import FileResponse, RedirectResponse
+
+        if index_file.is_file():
+            return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
         return RedirectResponse(url="/docs")
 
     # -----------------------------------------------------------------------

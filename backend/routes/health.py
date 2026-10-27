@@ -28,8 +28,14 @@ async def get_health(request: Request) -> HealthResponse:
     detector_loaded = False
     inference_device = "unknown"
     if monitoring_service and monitoring_service.pipeline and monitoring_service.pipeline.detector:
-        detector_loaded = monitoring_service.pipeline.detector.model is not None
-        inference_device = str(monitoring_service.pipeline.detector.device)
+        det = monitoring_service.pipeline.detector
+        # Torch backend keeps a YOLO model; ONNX backend keeps an onnxruntime session
+        detector_loaded = (
+            getattr(det, "model", None) is not None or getattr(det, "session", None) is not None
+        )
+        inference_device = str(det.device)
+        if getattr(det, "backend", "torch") == "onnx":
+            inference_device += " (onnxruntime)"
 
     # Face models check
     face_models_loaded = False

@@ -159,7 +159,15 @@ export default function LiveMonitoring({
       const blob = await new Promise((resolve) => capture.toBlob(resolve, 'image/jpeg', 0.7));
       if (!blob || !runningRef.current) return;
 
-      const status = await analyzeFrame(blob);
+      // Generous timeout: a sleeping free-tier server needs ~1 min to wake up
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90000);
+      let status;
+      try {
+        status = await analyzeFrame(blob, controller.signal);
+      } finally {
+        clearTimeout(timer);
+      }
       if (!runningRef.current) return;
       browserPersonsRef.current = status.persons || [];
       setBrowserStatusMsg('');
@@ -250,11 +258,13 @@ export default function LiveMonitoring({
     }
   };
 
-  // Stop camera on unmount
+  // Stop camera on unmount (e.g. switching tabs) and tell the server the stream ended
   useEffect(() => () => {
+    const wasRunning = runningRef.current;
     runningRef.current = false;
     cancelAnimationFrame(rafRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    if (wasRunning) stopMonitoring().catch(() => {});
   }, []);
 
   // Standby / server-mode canvas
@@ -280,7 +290,7 @@ export default function LiveMonitoring({
   };
 
   const handleModeChange = () => {
-    if (streaming) return;
+    if (streaming || !isLocalHost) return;
     setCameraMode((m) => (m === 'browser' ? 'server' : 'browser'));
   };
 
@@ -306,6 +316,7 @@ export default function LiveMonitoring({
           <span>Real-Time Sensor Viewport</span>
         </div>
         <div className="panel-controls" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {isLocalHost && (
           <button
             className="btn btn-sm"
             onClick={handleModeChange}
@@ -320,6 +331,7 @@ export default function LiveMonitoring({
             {cameraMode === 'browser' ? <Laptop size={14} /> : <Server size={14} />}
             <span>{cameraMode === 'browser' ? 'This Device Camera' : 'Server Camera'}</span>
           </button>
+          )}
 
           <button
             className="btn btn-sm"

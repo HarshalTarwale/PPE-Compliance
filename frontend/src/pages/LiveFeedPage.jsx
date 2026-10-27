@@ -6,6 +6,7 @@ export default function LiveFeedPage({
   monitoringStatus,
   onStartStream,
   onStopStream,
+  onBrowserStatus,
   isStreamLoading,
 }) {
   const {
@@ -32,6 +33,7 @@ export default function LiveFeedPage({
           nonCompliantCount={non_compliant_count}
           onStart={onStartStream}
           onStop={onStopStream}
+          onBrowserStatus={onBrowserStatus}
           isLoading={isStreamLoading}
         />
       </div>

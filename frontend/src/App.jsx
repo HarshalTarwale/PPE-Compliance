@@ -151,6 +151,7 @@ export default function App() {
             monitoringStatus={monitoringStatus}
             onStartStream={handleStartStream}
             onStopStream={handleStopStream}
+            onBrowserStatus={setMonitoringStatus}
             isStreamLoading={isStreamLoading}
           />
         )}

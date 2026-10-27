@@ -7,8 +7,10 @@ from typing import Optional
 
 from fastapi import (
     APIRouter,
+    File,
     HTTPException,
     Request,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -91,6 +93,38 @@ async def stop_monitoring(request: Request) -> MonitoringControlResponse:
     """Stop the background inference worker loop."""
     service = get_monitoring_service(request)
     return service.stop()
+
+
+@router.post(
+    "/monitoring/frame",
+    response_model=MonitoringStatusResponse,
+    summary="Analyze one camera frame sent by the browser",
+)
+async def analyze_browser_frame(
+    request: Request,
+    frame: UploadFile = File(..., description="JPEG/PNG camera frame"),
+) -> MonitoringStatusResponse:
+    """Run the PPE pipeline on a frame captured by the user's browser webcam.
+
+    Used when the backend runs in the cloud and has no camera of its own.
+    """
+    import cv2
+    import numpy as np
+    from starlette.concurrency import run_in_threadpool
+
+    service = get_monitoring_service(request)
+    data = await frame.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty frame.")
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Frame too large.")
+
+    img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not decode image.")
+
+    # Inference is CPU-bound; keep it off the event loop
+    return await run_in_threadpool(service.process_single_frame, img, "browser_camera")
 
 
 @router.get(

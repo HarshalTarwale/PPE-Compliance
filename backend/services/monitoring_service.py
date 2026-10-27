@@ -67,6 +67,10 @@ class MonitoringService:
         self._frame_id: int = 0
         self._frame_lock = threading.Lock()
 
+        # Serializes access to the (stateful, non-thread-safe) pipeline so that
+        # browser-submitted frames and the server camera worker never collide.
+        self._pipeline_lock = threading.Lock()
+
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Assign the active asyncio event loop for thread-safe WebSocket broadcasts."""
         self._event_loop = loop
@@ -139,8 +143,9 @@ class MonitoringService:
         if frame is None or frame.size == 0:
             return self._empty_status(source=source_label)
 
-        result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=False)
-        status = self._build_status_response(result, is_active=self.is_active, source=source_label)
+        with self._pipeline_lock:
+            result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=False)
+        status = self._build_status_response(result, is_active=True, source=source_label)
 
         with self._lock:
             self._latest_status = status
@@ -211,6 +216,9 @@ class MonitoringService:
         """Signal background worker to terminate and wait for clean shutdown."""
         with self._lock:
             if not self._is_active:
+                # Clear any leftover status from browser-camera frames
+                self._latest_status = self._empty_status(source=None)
+                self._schedule_broadcast(self._latest_status)
                 return MonitoringControlResponse(
                     status="stopped",
                     source=None,
@@ -325,7 +333,8 @@ class MonitoringService:
                     frame = cv2.flip(frame, 0)
 
                 # Run multi-stage pipeline with visual overlay enabled
-                result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=True)
+                with self._pipeline_lock:
+                    result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=True)
 
                 display_frame = result.annotated_frame if result.annotated_frame is not None else frame
                 

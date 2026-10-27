@@ -82,6 +82,18 @@ export async function stopMonitoring() {
   return handleResponse(res);
 }
 
+/** Send one browser-captured camera frame (JPEG Blob) for PPE analysis. */
+export async function analyzeFrame(blob, signal) {
+  const formData = new FormData();
+  formData.append('frame', blob, 'frame.jpg');
+  const res = await fetch(`${API_BASE}/monitoring/frame`, {
+    method: 'POST',
+    body: formData,
+    signal,
+  });
+  return handleResponse(res);
+}
+
 export async function fetchCameraSnapshot(raw = true) {
   const res = await fetch(`${API_BASE}/monitoring/snapshot?raw=${raw}`);
   if (!res.ok) {

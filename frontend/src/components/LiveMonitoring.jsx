@@ -73,6 +73,18 @@ function drawPersons(ctx, persons, scaleX = 1, scaleY = 1) {
   });
 }
 
+// Average brightness (0-255) of a canvas, sampled sparsely so it stays cheap
+function averageBrightness(ctx, width, height) {
+  const { data } = ctx.getImageData(0, 0, width, height);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < data.length; i += 4 * 16) {
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    count += 1;
+  }
+  return count ? sum / count : 255;
+}
+
 function drawStandbyGrid(ctx, canvas) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#050811';
@@ -116,6 +128,7 @@ export default function LiveMonitoring({
   const [cameraMode, setCameraMode] = useState(DEFAULT_CAMERA_MODE);
   const [browserActive, setBrowserActive] = useState(false);
   const [browserStatusMsg, setBrowserStatusMsg] = useState('');
+  const [isTooDark, setIsTooDark] = useState(false);
 
   const serverActive = isActive && source !== 'browser_camera';
   const streaming = cameraMode === 'browser' ? browserActive : serverActive;
@@ -155,6 +168,10 @@ export default function LiveMonitoring({
       }
       ctx.drawImage(video, 0, 0, capture.width, capture.height);
       ctx.restore();
+
+      // A nearly black picture usually means the lens is covered, a privacy
+      // shutter is closed, or another app is holding the camera.
+      setIsTooDark(averageBrightness(ctx, capture.width, capture.height) < 30);
 
       const blob = await new Promise((resolve) => capture.toBlob(resolve, 'image/jpeg', 0.7));
       if (!blob || !runningRef.current) return;
@@ -211,6 +228,7 @@ export default function LiveMonitoring({
     browserPersonsRef.current = [];
     setBrowserActive(false);
     setBrowserStatusMsg('');
+    setIsTooDark(false);
     // Let any in-flight frame finish so it can't re-mark the server as live
     for (let i = 0; i < 30 && sendingRef.current; i += 1) {
       await new Promise((r) => setTimeout(r, 100));
@@ -372,6 +390,29 @@ export default function LiveMonitoring({
             />
           ) : (
             <canvas ref={canvasRef} width={640} height={360} className="viewport-canvas" />
+          )}
+
+          {browserActive && isTooDark && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '0.75rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                maxWidth: '90%',
+                background: 'rgba(234, 179, 8, 0.92)',
+                color: '#111827',
+                padding: '0.5rem 0.85rem',
+                borderRadius: '6px',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                textAlign: 'center',
+              }}
+            >
+              Camera image is almost black. Open the laptop&apos;s camera privacy shutter / uncover the
+              lens, turn on room lights, and close other apps or tabs using the camera
+              (Zoom, Teams, the Windows Camera app, a local server).
+            </div>
           )}
 
           {browserActive && browserStatusMsg && (

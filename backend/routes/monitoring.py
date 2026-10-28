@@ -9,6 +9,7 @@ from fastapi import (
     APIRouter,
     File,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -21,6 +22,7 @@ from backend.schemas.monitoring import (
     MonitoringControlResponse,
     MonitoringFlipRequest,
     MonitoringStatusResponse,
+    SafetyEventListResponse,
 )
 from backend.services.monitoring_service import MonitoringService
 
@@ -48,6 +50,34 @@ async def get_monitoring_status(request: Request) -> MonitoringStatusResponse:
     """Retrieve current structured PPE compliance status for all tracked individuals."""
     service = get_monitoring_service(request)
     return service.get_current_status()
+
+
+@router.get(
+    "/monitoring/events",
+    response_model=SafetyEventListResponse,
+    summary="Safety event history (PPE violations and unknown persons)",
+)
+async def list_safety_events(
+    request: Request,
+    limit: int = Query(200, ge=1, le=5000, description="Maximum number of events to return"),
+    type: Optional[str] = Query(
+        None, description="Filter by event type: 'ppe_violation' or 'unknown_person'"
+    ),
+) -> SafetyEventListResponse:
+    """Return logged safety events, newest first, with the time each one happened."""
+    service = get_monitoring_service(request)
+    return SafetyEventListResponse(**service.list_events(limit=limit, event_type=type))
+
+
+@router.delete(
+    "/monitoring/events",
+    summary="Clear the safety event history",
+)
+async def clear_safety_events(request: Request) -> dict:
+    """Delete all logged safety events."""
+    service = get_monitoring_service(request)
+    removed = service.clear_events()
+    return {"detail": f"Cleared {removed} event(s).", "removed": removed}
 
 
 @router.post(

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import cv2
 import numpy as np
@@ -535,6 +535,10 @@ class EmployeeRegistrationService:
     # Minimum gap between best and second-best match to accept identification.
     # Prevents ambiguous matches where two employees score almost equally.
     MATCH_MARGIN: float = 0.09
+
+    def registered_employee_ids(self) -> Set[str]:
+        """Return the IDs of all currently enrolled employees."""
+        return {rec.employee_id for rec in self.storage.load_all_records()}
 
     def identify(
         self,

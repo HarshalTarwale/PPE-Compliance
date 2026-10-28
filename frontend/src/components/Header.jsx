@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Activity, Users, UserPlus, Radio, Wifi, WifiOff, Video } from 'lucide-react';
+import { ShieldAlert, Activity, Users, UserPlus, Radio, Wifi, WifiOff, Video, History } from 'lucide-react';
 
 export default function Header({
   activeTab,
@@ -50,6 +50,14 @@ export default function Header({
         >
           <Activity size={16} />
           <span>Dashboard</span>
+        </button>
+        <button
+          className={`nav-link ${activeTab === 'violations' ? 'active' : ''}`}
+          onClick={() => onTabChange('violations')}
+          title="History of PPE violations and unknown persons"
+        >
+          <History size={16} />
+          <span>Violation Log</span>
         </button>
         <button
           className={`nav-link ${activeTab === 'employees' ? 'active' : ''}`}

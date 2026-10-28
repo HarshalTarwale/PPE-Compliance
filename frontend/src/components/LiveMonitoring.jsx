@@ -2,8 +2,17 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Play, Square, Camera, Video, FlipHorizontal, Laptop, Server } from 'lucide-react';
 import { toggleCameraFlip, analyzeFrame, stopMonitoring, fetchMonitoringStatus } from '../api/client';
 
-// Width of frames sent to the backend (height follows the camera aspect ratio)
-const CAPTURE_WIDTH = 640;
+// Width of frames sent to the backend (height follows the camera aspect ratio).
+// Kept small so each upload is quick on slow connections to a cloud server.
+const CAPTURE_WIDTH = 480;
+const CAPTURE_JPEG_QUALITY = 0.6;
+// Width of the on-screen canvas; backend boxes are scaled up to it
+const DISPLAY_WIDTH = 640;
+// The first frame may have to wait for a sleeping free-tier server to boot
+const FIRST_FRAME_TIMEOUT_MS = 90000;
+const FRAME_TIMEOUT_MS = 30000;
+// No answer for this long on the first frame means the server is waking up
+const WAKING_HINT_AFTER_MS = 5000;
 
 // When the app is opened from anywhere other than this machine, the backend
 // (e.g. on Render) has no webcam, so default to the viewer's own camera.
@@ -123,12 +132,15 @@ export default function LiveMonitoring({
   const runningRef = useRef(false);
   const browserPersonsRef = useRef([]);
   const flippedRef = useRef(true);
+  const startedAtRef = useRef(0);
+  const gotFirstFrameRef = useRef(false);
 
   const [isFlipped, setIsFlipped] = useState(true);
   const [cameraMode, setCameraMode] = useState(DEFAULT_CAMERA_MODE);
   const [browserActive, setBrowserActive] = useState(false);
   const [browserStatusMsg, setBrowserStatusMsg] = useState('');
   const [isTooDark, setIsTooDark] = useState(false);
+  const [frameMs, setFrameMs] = useState(null);
 
   const serverActive = isActive && source !== 'browser_camera';
   const streaming = cameraMode === 'browser' ? browserActive : serverActive;
@@ -173,12 +185,18 @@ export default function LiveMonitoring({
       // shutter is closed, or another app is holding the camera.
       setIsTooDark(averageBrightness(ctx, capture.width, capture.height) < 30);
 
-      const blob = await new Promise((resolve) => capture.toBlob(resolve, 'image/jpeg', 0.7));
+      const blob = await new Promise((resolve) =>
+        capture.toBlob(resolve, 'image/jpeg', CAPTURE_JPEG_QUALITY),
+      );
       if (!blob || !runningRef.current) return;
 
-      // Generous timeout: a sleeping free-tier server needs ~1 min to wake up
+      // Generous timeout for the first frame: a sleeping free-tier server needs ~1 min to wake up
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 90000);
+      const timer = setTimeout(
+        () => controller.abort(),
+        gotFirstFrameRef.current ? FRAME_TIMEOUT_MS : FIRST_FRAME_TIMEOUT_MS,
+      );
+      const sentAt = performance.now();
       let status;
       try {
         status = await analyzeFrame(blob, controller.signal);
@@ -186,12 +204,20 @@ export default function LiveMonitoring({
         clearTimeout(timer);
       }
       if (!runningRef.current) return;
+      gotFirstFrameRef.current = true;
+      setFrameMs(Math.round(performance.now() - sentAt));
       browserPersonsRef.current = status.persons || [];
       setBrowserStatusMsg('');
       if (onBrowserStatus) onBrowserStatus(status);
     } catch (err) {
       console.warn('Frame analysis failed:', err.message);
-      setBrowserStatusMsg('Waiting for server… (a sleeping free-tier server can take ~1 min to wake up)');
+      // Old boxes would point at where people were before the outage
+      browserPersonsRef.current = [];
+      setBrowserStatusMsg(
+        gotFirstFrameRef.current
+          ? 'Lost connection to the detection server. Retrying…'
+          : 'Detection server is not answering yet (it may be starting up). Retrying…',
+      );
       await new Promise((r) => setTimeout(r, 2000));
     } finally {
       sendingRef.current = false;
@@ -211,7 +237,8 @@ export default function LiveMonitoring({
       }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       ctx.restore();
-      drawPersons(ctx, browserPersonsRef.current);
+      const scale = canvas.width / captureCanvasRef.current.width;
+      drawPersons(ctx, browserPersonsRef.current, scale, scale);
     }
     sendFrame();
     rafRef.current = requestAnimationFrame(loop);
@@ -229,6 +256,7 @@ export default function LiveMonitoring({
     setBrowserActive(false);
     setBrowserStatusMsg('');
     setIsTooDark(false);
+    setFrameMs(null);
     // Let any in-flight frame finish so it can't re-mark the server as live
     for (let i = 0; i < 30 && sendingRef.current; i += 1) {
       await new Promise((r) => setTimeout(r, 100));
@@ -258,16 +286,16 @@ export default function LiveMonitoring({
 
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 480;
-      const w = CAPTURE_WIDTH;
-      const h = Math.round((CAPTURE_WIDTH * vh) / vw);
-      // Display canvas and capture canvas share one coordinate space,
-      // so boxes from the backend can be drawn without rescaling.
-      canvasRef.current.width = w;
-      canvasRef.current.height = h;
-      captureCanvasRef.current.width = w;
-      captureCanvasRef.current.height = h;
+      // Same aspect ratio on both canvases, so backend boxes only need one scale factor
+      canvasRef.current.width = DISPLAY_WIDTH;
+      canvasRef.current.height = Math.round((DISPLAY_WIDTH * vh) / vw);
+      captureCanvasRef.current.width = CAPTURE_WIDTH;
+      captureCanvasRef.current.height = Math.round((CAPTURE_WIDTH * vh) / vw);
 
       runningRef.current = true;
+      gotFirstFrameRef.current = false;
+      startedAtRef.current = Date.now();
+      setFrameMs(null);
       setBrowserActive(true);
       setBrowserStatusMsg('Connecting to detection server…');
       rafRef.current = requestAnimationFrame(renderLoop);
@@ -275,6 +303,21 @@ export default function LiveMonitoring({
       alert(`Could not open camera: ${err.message}`);
     }
   };
+
+  // While waiting for the first answer, explain a slow start instead of a bare "Connecting…"
+  useEffect(() => {
+    if (!browserActive) return undefined;
+    const timer = setInterval(() => {
+      if (gotFirstFrameRef.current) return;
+      const waited = Date.now() - startedAtRef.current;
+      if (waited > WAKING_HINT_AFTER_MS) {
+        setBrowserStatusMsg(
+          `Waking up the detection server (${Math.round(waited / 1000)} s). Free cloud hosting sleeps when idle; this can take up to a minute…`,
+        );
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [browserActive]);
 
   // Stop camera on unmount (e.g. switching tabs) and tell the server the stream ended
   useEffect(() => () => {
@@ -412,6 +455,25 @@ export default function LiveMonitoring({
               Camera image is almost black. Open the laptop&apos;s camera privacy shutter / uncover the
               lens, turn on room lights, and close other apps or tabs using the camera
               (Zoom, Teams, the Windows Camera app, a local server).
+            </div>
+          )}
+
+          {browserActive && frameMs !== null && !browserStatusMsg && (
+            <div
+              className="mono"
+              title="Round-trip time for one frame to the detection server and back"
+              style={{
+                position: 'absolute',
+                bottom: '0.75rem',
+                right: '0.75rem',
+                background: 'rgba(15, 23, 42, 0.85)',
+                color: frameMs > 3000 ? '#fbbf24' : '#94a3b8',
+                padding: '0.2rem 0.5rem',
+                borderRadius: '4px',
+                fontSize: '0.7rem',
+              }}
+            >
+              Server: {(frameMs / 1000).toFixed(1)} s/frame
             </div>
           )}
 

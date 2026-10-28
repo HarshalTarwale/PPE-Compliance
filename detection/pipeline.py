@@ -323,6 +323,18 @@ class PPECompliancePipeline:
         self.face_confidence_threshold = float(face_confidence_threshold)
         self.face_check_interval = int(face_check_interval)
 
+    def _registered_employee_ids(self) -> Optional[Set[str]]:
+        """IDs currently enrolled in the face database, or None if unavailable."""
+        getter = getattr(self.face_service, "registered_employee_ids", None)
+        if getter is None:
+            return None
+        try:
+            ids = getter()
+        except Exception as exc:
+            logger.warning("Could not read registered employee IDs: %s", exc)
+            return None
+        return ids if isinstance(ids, (set, frozenset)) else None
+
     # -----------------------------------------------------------------------
     # Core Processing
     # -----------------------------------------------------------------------
@@ -394,8 +406,24 @@ class PPECompliancePipeline:
         # 4. Face Recognition & Identity Verification
         # ---------------------------------------------------------------
         t_rec_accum = 0.0
+        registered_ids = self._registered_employee_ids()
         for track, _ in matched_tracks:
             t_rec_start = time.perf_counter()
+
+            # An employee deleted from the database must stop being shown by name
+            # right away, not only after the next periodic face re-check.
+            if (
+                registered_ids is not None
+                and track.employee_id != "UNKNOWN"
+                and track.employee_id not in registered_ids
+            ):
+                track.employee_id = "UNKNOWN"
+                track.employee_name = "UNKNOWN"
+                track.face_similarity = None
+                track.failed_rechecks = 0
+                track.face_attempts = 0
+
+
             # Adaptive face verification:
             # Check immediately on frame 0, and every 2 frames while UNKNOWN so identity is discovered promptly
             # If verified: re-verify periodically (every 60 frames ~ 2s) to maintain continuous tracking

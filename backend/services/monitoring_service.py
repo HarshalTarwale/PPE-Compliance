@@ -12,9 +12,11 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Union
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -26,11 +28,32 @@ from backend.schemas.monitoring import (
     MonitoringControlResponse,
     MonitoringStatusResponse,
     MonitoringTelemetrySchema,
+    SafetyEventSchema,
     TrackedPersonSchema,
 )
+from backend.services.event_log import SafetyEventLog
 from detection.pipeline import PipelineResult, PPECompliancePipeline
 
 logger = logging.getLogger("monitoring_service")
+
+# A violation must persist this long before it is logged (filters one-frame flicker)
+VIOLATION_CONFIRM_SECONDS = 1.0
+# After a person has been compliant this long, a new violation is logged again
+VIOLATION_RESET_SECONDS = 5.0
+# A person must stay unrecognized this long (and over 2+ frames) to raise an alert
+UNKNOWN_ALERT_SECONDS = 2.0
+
+
+@dataclass
+class _TrackAlertState:
+    """Per-track bookkeeping used to turn frame results into discrete events."""
+
+    violation_since: Optional[float] = None
+    compliant_since: Optional[float] = None
+    logged_violation: Optional[tuple] = None  # (employee_id, missing items) last logged
+    unknown_since: Optional[float] = None
+    unknown_frames: int = 0
+    unknown_alerted: bool = False
 
 
 class MonitoringService:
@@ -40,9 +63,13 @@ class MonitoringService:
         self,
         pipeline: Optional[PPECompliancePipeline] = None,
         event_loop: Optional[asyncio.AbstractEventLoop] = None,
+        event_log: Optional[SafetyEventLog] = None,
     ) -> None:
         self.pipeline = pipeline or PPECompliancePipeline()
         self._event_loop = event_loop
+        self.event_log = event_log or SafetyEventLog()
+        self._alert_states: Dict[str, _TrackAlertState] = {}
+        self._alert_lock = threading.Lock()
 
         # Threading state
         self._thread: Optional[threading.Thread] = None
@@ -146,6 +173,7 @@ class MonitoringService:
         with self._pipeline_lock:
             result: PipelineResult = self.pipeline.process_frame(frame, draw_overlay=False)
         status = self._build_status_response(result, is_active=True, source=source_label)
+        status.events = self._detect_events(status)
 
         with self._lock:
             self._latest_status = status
@@ -215,6 +243,7 @@ class MonitoringService:
     def stop(self) -> MonitoringControlResponse:
         """Signal background worker to terminate and wait for clean shutdown."""
         with self._lock:
+            self._reset_alert_states()
             if not self._is_active:
                 # Clear any leftover status from browser-camera frames
                 self._latest_status = self._empty_status(source=None)
@@ -347,6 +376,7 @@ class MonitoringService:
                 status = self._build_status_response(
                     result, is_active=True, source=str(source)
                 )
+                status.events = self._detect_events(status)
 
                 with self._lock:
                     self._latest_status = status
@@ -411,6 +441,117 @@ class MonitoringService:
             ),
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
+
+    # -----------------------------------------------------------------------
+    # Safety Events (violation history & unknown-person alerts)
+    # -----------------------------------------------------------------------
+
+    def _reset_alert_states(self) -> None:
+        with self._alert_lock:
+            self._alert_states.clear()
+
+    def _detect_events(
+        self,
+        status: MonitoringStatusResponse,
+        now: Optional[float] = None,
+    ) -> List[SafetyEventSchema]:
+        """Turn a per-frame status into new safety events and persist them.
+
+        Logs a PPE violation once it has lasted VIOLATION_CONFIRM_SECONDS (again if
+        the missing items or identity change), and raises a single unknown-person
+        alert per track once it stays unrecognized for UNKNOWN_ALERT_SECONDS.
+        """
+        now = time.monotonic() if now is None else now
+        events: List[SafetyEventSchema] = []
+
+        with self._alert_lock:
+            present = {p.track_id for p in status.persons}
+            for track_id in list(self._alert_states):
+                if track_id not in present:
+                    del self._alert_states[track_id]
+
+            for person in status.persons:
+                st = self._alert_states.setdefault(person.track_id, _TrackAlertState())
+                is_unknown = person.employee_id == "UNKNOWN"
+
+                # --- PPE violations ---
+                missing: FrozenSet[str] = (
+                    frozenset(person.missing_items) if not person.is_compliant else frozenset()
+                )
+                if missing:
+                    st.compliant_since = None
+                    if st.violation_since is None:
+                        st.violation_since = now
+                    key = (person.employee_id, missing)
+                    if (
+                        now - st.violation_since >= VIOLATION_CONFIRM_SECONDS
+                        and key != st.logged_violation
+                    ):
+                        st.logged_violation = key
+                        who = "Unknown person" if is_unknown else person.employee_name
+                        events.append(self._make_event(
+                            "ppe_violation", person, status.source,
+                            f"{who} is missing: {', '.join(sorted(missing))}",
+                        ))
+                else:
+                    st.violation_since = None
+                    if st.compliant_since is None:
+                        st.compliant_since = now
+                    if now - st.compliant_since >= VIOLATION_RESET_SECONDS:
+                        st.logged_violation = None
+
+                # --- Unknown person ---
+                if is_unknown:
+                    if st.unknown_since is None:
+                        st.unknown_since = now
+                    st.unknown_frames += 1
+                    if (
+                        not st.unknown_alerted
+                        and st.unknown_frames >= 2
+                        and now - st.unknown_since >= UNKNOWN_ALERT_SECONDS
+                    ):
+                        st.unknown_alerted = True
+                        events.append(self._make_event(
+                            "unknown_person", person, status.source,
+                            f"Unknown person detected ({person.track_id})",
+                        ))
+                else:
+                    st.unknown_since = None
+                    st.unknown_frames = 0
+
+        for event in events:
+            self.event_log.append(event.model_dump())
+        return events
+
+    @staticmethod
+    def _make_event(
+        event_type: str,
+        person: TrackedPersonSchema,
+        source: Optional[str],
+        message: str,
+    ) -> SafetyEventSchema:
+        return SafetyEventSchema(
+            id=uuid.uuid4().hex[:12],
+            type=event_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            track_id=person.track_id,
+            employee_id=person.employee_id,
+            employee_name=person.employee_name,
+            missing_items=sorted(person.missing_items) if not person.is_compliant else [],
+            message=message,
+            source=source,
+        )
+
+    def list_events(self, limit: int = 200, event_type: Optional[str] = None) -> Dict[str, Any]:
+        """Return stored safety events (newest first) plus the total count."""
+        return {
+            "total": self.event_log.count(),
+            "events": self.event_log.list(limit=limit, event_type=event_type),
+        }
+
+    def clear_events(self) -> int:
+        """Delete the stored safety event history."""
+        return self.event_log.clear()
 
     # -----------------------------------------------------------------------
     # WebSocket Dispatch

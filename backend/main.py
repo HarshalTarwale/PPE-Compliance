@@ -131,7 +131,7 @@ def create_app(
     static_dir = Path(__file__).resolve().parent / "static"
     index_file = static_dir / "index.html"
     spa_paths = {"/", "/live", "/dashboard", "/employees", "/register",
-                 "/personnel", "/stream", "/camera"}
+                 "/personnel", "/stream", "/camera", "/violations"}
 
     @app.middleware("http")
     async def serve_dashboard(request: Request, call_next):

@@ -54,3 +54,6 @@ logs/
 
 # Environment
 .env
+
+# Safety event history written at runtime
+data/events/

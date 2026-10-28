@@ -101,3 +101,16 @@ export async function fetchCameraSnapshot(raw = true) {
   }
   return res.blob();
 }
+
+/** Logged safety events (PPE violations, unknown persons), newest first. */
+export async function fetchSafetyEvents(limit = 500, type = null) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (type) params.set('type', type);
+  const res = await fetch(`${API_BASE}/monitoring/events?${params}`);
+  return handleResponse(res);
+}
+
+export async function clearSafetyEvents() {
+  const res = await fetch(`${API_BASE}/monitoring/events`, { method: 'DELETE' });
+  return handleResponse(res);
+}

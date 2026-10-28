@@ -22,6 +22,27 @@ class TrackedPersonSchema(BaseModel):
     face_similarity: Optional[float] = Field(None, description="Cosine similarity score for verified face")
 
 
+class SafetyEventSchema(BaseModel):
+    """A logged safety event: a PPE violation or an unknown person in view."""
+
+    id: str = Field(..., description="Unique event ID")
+    type: str = Field(..., description="'ppe_violation' or 'unknown_person'")
+    timestamp: str = Field(..., description="ISO 8601 UTC time the event was recorded")
+    track_id: str = Field(..., description="Tracker ID of the person involved")
+    employee_id: str = Field("UNKNOWN", description="Matched employee ID or 'UNKNOWN'")
+    employee_name: str = Field("UNKNOWN", description="Matched employee name or 'UNKNOWN'")
+    missing_items: List[str] = Field(default_factory=list, description="Missing PPE at the time")
+    message: str = Field("", description="Human-readable summary")
+    source: Optional[str] = Field(None, description="Camera source the event came from")
+
+
+class SafetyEventListResponse(BaseModel):
+    """Schema for GET /monitoring/events response."""
+
+    total: int = Field(..., description="Total number of events stored")
+    events: List[SafetyEventSchema] = Field(default_factory=list, description="Events, newest first")
+
+
 class MonitoringTelemetrySchema(BaseModel):
     """Pipeline latency and performance metrics."""
 
@@ -48,6 +69,9 @@ class MonitoringStatusResponse(BaseModel):
         default_factory=MonitoringTelemetrySchema, description="Timing and FPS telemetry"
     )
     timestamp: str = Field(..., description="ISO 8601 timestamp of status evaluation")
+    events: List[SafetyEventSchema] = Field(
+        default_factory=list, description="Safety events raised by this frame (new alerts)"
+    )
 
 
 class MonitoringControlRequest(BaseModel):

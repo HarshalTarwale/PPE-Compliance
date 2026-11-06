@@ -186,6 +186,7 @@ async def get_video_feed(request: Request):
     service = get_monitoring_service(request)
 
     async def frame_stream():
+        """Yield new annotated JPEG frames as an MJPEG stream until the client disconnects."""
         last_frame_id = -1
         while True:
             if await request.is_disconnected():

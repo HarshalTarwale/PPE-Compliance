@@ -1,3 +1,7 @@
+/**
+ * Register page: enrol a new employee by capturing webcam snapshots or
+ * uploading face photos. The backend turns them into 128-D SFace embeddings.
+ */
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera,

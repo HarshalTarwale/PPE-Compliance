@@ -1,3 +1,7 @@
+/**
+ * Root component. Owns the shared state (monitoring status, WebSocket
+ * connection, mock mode, unknown-person toasts) and switches between pages.
+ */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Header from './components/Header';
 import UnknownPersonToasts from './components/UnknownPersonToasts';

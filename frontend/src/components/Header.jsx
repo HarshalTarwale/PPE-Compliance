@@ -1,3 +1,6 @@
+/**
+ * Top bar: app title, page tabs, connection / stream badges, FPS and UTC clock.
+ */
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Activity, Users, UserPlus, Radio, Wifi, WifiOff, Video, History } from 'lucide-react';
 

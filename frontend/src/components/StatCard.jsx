@@ -1,3 +1,6 @@
+/**
+ * Small KPI card (label, big value, sub-text) used on the dashboard.
+ */
 import React from 'react';
 
 export default function StatCard({ label, value, sub, accent = 'neutral', icon: Icon }) {

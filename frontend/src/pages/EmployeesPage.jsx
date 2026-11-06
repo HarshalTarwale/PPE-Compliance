@@ -1,3 +1,7 @@
+/**
+ * Personnel page: lists enrolled employees (face embeddings only, no photos),
+ * with search, refresh and delete.
+ */
 import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, Trash2, Search, RefreshCw, Key, Image } from 'lucide-react';
 import { fetchEmployees, deleteEmployee } from '../api/client';

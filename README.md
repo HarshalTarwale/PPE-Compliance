@@ -6,6 +6,74 @@ An end-to-end automated Personal Protective Equipment (PPE) detection and safety
 
 ---
 
+## Sample Output
+
+**Live Feed — worker wearing hardhat and safety vest (COMPLIANT, green box)**
+![Live feed, compliant worker](docs/screenshots/live_feed_compliant.jpg)
+
+**Live Feed — same worker without PPE (NON-COMPLIANT, red box)**
+![Live feed, non-compliant worker](docs/screenshots/live_feed_violation.jpg)
+
+**Dashboard — all tracked workers compliant**
+![Dashboard, all compliant](docs/screenshots/dashboard_compliant.jpg)
+
+**Dashboard — violation alert with missing items listed**
+![Dashboard, violation alert](docs/screenshots/dashboard_violation.jpg)
+
+**Personnel catalog — enrolled employees stored as 128-D face embeddings (no photos kept)**
+![Personnel catalog](docs/screenshots/personnel_catalog.jpg)
+
+In each case the worker is identified by face (`EMP1: Bharat Digrase`, match similarity ~83–84%) and the
+hardhat / vest status is updated live. All screenshots are in [docs/screenshots/](docs/screenshots/).
+
+---
+
+## Project Structure
+
+```
+ppe-compliance/
+├── backend/            FastAPI server: REST routes, WebSocket, background inference worker
+│   ├── routes/         /health, /employees, /monitoring endpoints
+│   ├── schemas/        Pydantic request/response models
+│   ├── services/       Monitoring worker, employee store, violation event log
+│   └── static/         Pre-built React dashboard (served at http://localhost:8000)
+├── detection/          YOLOv8 detector, PPE-to-person association, full pipeline, webcam demo
+├── recognition/        Face detection (YuNet) + 128-D embeddings (SFace) + employee registration
+├── compliance/         Compliance rules and sliding-window temporal filter (anti-flicker)
+├── config/             Central settings and logging setup
+├── training/           train.py (YOLOv8n training) and evaluate.py (precision/recall/mAP)
+├── scripts/            Dataset preparation/checking/visualisation, benchmarking, model comparison
+├── models/
+│   ├── weights/        Trained PPE detector weights (.pt and .onnx)
+│   └── face/           YuNet face detector + SFace recogniser (ONNX)
+├── data/employees/     Enrolled employee records and face embeddings (.npz)
+├── frontend/           React + Vite dashboard source code
+├── tests/              Pytest suite (203 tests)
+├── docs/               Architecture, data flow, evaluation, limitations, screenshots
+├── requirements.txt    Python dependencies
+└── start.bat / stop.bat  One-click launch / shutdown on Windows
+```
+
+---
+
+## Model Weights
+
+All weights needed to run the system are included in the repository — no download is required.
+
+| File | Purpose | Classes |
+|---|---|---|
+| `models/weights/best.pt` | **Main PPE detector** (YOLOv8n, PyTorch). Used by default by the backend, webcam and pipeline. | 5: Person, Hardhat, NO-Hardhat, Safety Vest, NO-Safety Vest |
+| `models/weights/best_5class.onnx` | Same 5-class detector exported to ONNX, used for CPU-only / cloud deployment (Render). | 5 |
+| `models/weights/ppe_5class_best.pt` / `.onnx` | 5-class candidate model used in the evaluation comparison. | 5 |
+| `models/weights/best_25class.pt` | Baseline model trained on the full 25-class dataset (for comparison only). | 25 |
+| `models/face/face_detection_yunet_2023mar.onnx` | OpenCV YuNet face detector. | — |
+| `models/face/face_recognition_sface_2021dec.onnx` | OpenCV SFace face recogniser (128-D embeddings). | — |
+| `yolov8n.pt` | COCO-pretrained YOLOv8n, the starting point for training. | 80 (COCO) |
+
+Accuracy figures for these models are in [Evaluation](#4-evaluation) and [docs/evaluation.md](docs/evaluation.md).
+
+---
+
 > 🚀 **DEMONSTRATION & VIVA PREPARATION:**
 > - 🗣️ **[What_To_Tell_Mam_Tomorrow_Demonstration_Script.docx](What_To_Tell_Mam_Tomorrow_Demonstration_Script.docx)** — Word-for-word spoken speech script, live demo actions, and viva answers.
 > - 📄 **[PPE_Compliance_Project_Demonstration_Guide.docx](PPE_Compliance_Project_Demonstration_Guide.docx)** — Complete formatted project & architecture report.
@@ -40,6 +108,34 @@ This single command will automatically:
 4. Open your default browser directly to the dashboard.
 
 To shut down all running servers, run **`stop.bat`**.
+
+### Execution Steps (any OS, step by step)
+
+```bash
+# 1. Create and activate a virtual environment (Python 3.11)
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # Linux / macOS
+
+# 2. Install Python dependencies
+pip install -r requirements.txt
+
+# 3. Start the backend (it also serves the pre-built dashboard)
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+# 4. Open the app in a browser
+#    http://localhost:8000/live       -> Live Feed (allow camera access)
+#    http://localhost:8000/dashboard  -> Dashboard
+#    http://localhost:8000/docs       -> API documentation
+```
+
+Then:
+1. Go to **Register**, enter an ID and name, and capture 2–4 face photos to enrol yourself.
+2. Go to **Live Feed** and click **Start Stream**. Your box turns **green** when a hardhat and safety vest
+   are detected and **red** when either is missing; your name appears once your face is recognised.
+3. Open **Dashboard** for the live counts and the violation alert, and **Violations** for the event history.
+
+Node.js is only needed if you want to edit the frontend (`cd frontend && npm install && npm run dev`).
 
 ---
 
@@ -83,7 +179,24 @@ cd ..
 
 ## 2. Dataset Setup
 
-The system is trained on the Construction Site Safety dataset (YOLOv8 format) with 25 annotated classes including Person, Hardhat, NO-Hardhat, Safety Vest, and NO-Safety Vest.
+> The dataset is **not** included in this repository because of its size. Download it with the steps below.
+> You only need it to re-train or re-evaluate the model — running the app uses the included weights.
+
+**Dataset:** Construction Site Safety (Roboflow Universe, YOLOv8 format, 25 classes)
+**Link:** https://universe.roboflow.com/roboflow-universe-projects/construction-site-safety
+
+The 25 classes include Person, Hardhat, NO-Hardhat, Safety Vest, NO-Safety Vest, plus 20 background classes
+(vehicles, machinery, cones, etc.). We filter it down to the 5 PPE classes, which improved mAP@50 by +9.1%.
+
+### 2.0 Download & Prepare
+1. Open the link above, click **Download Dataset**, choose format **YOLOv8**, and download the ZIP
+   (a free Roboflow account is needed).
+2. Extract it, e.g. to `data/raw/construction-site-safety/` (it contains `train/`, `valid/`, `test/` and `data.yaml`).
+3. Build the 5-class dataset used for training:
+   ```bash
+   python scripts/prepare_5class_dataset.py --source data/raw/construction-site-safety --output data/processed/ppe_5class
+   ```
+   This writes `data/processed/ppe_5class/data.yaml`, which is the `--data` path used in the Training and Evaluation steps below.
 
 ### 2.1 Dataset Validation
 Validate data hierarchy, label coordinates, bounding box bounds, and class distribution:
@@ -298,11 +411,11 @@ Results are automatically saved to `outputs/benchmark_results.json`.
 
 ## Test Suite Execution
 
-Run the complete automated test suite (177 tests covering compliance rules, spatial association, temporal filters, face registration, REST routes, and WebSockets):
+Run the complete automated test suite (203 tests covering compliance rules, spatial association, temporal filters, face registration, REST routes, and WebSockets):
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/ -v
-# 177 passed in 2.29s
+# 203 passed in ~6s
 ```
 
 ---

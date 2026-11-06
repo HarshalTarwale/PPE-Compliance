@@ -1,3 +1,7 @@
+/**
+ * Live Feed page: camera viewport on the left, per-person detection cards
+ * (identity, hardhat, vest, match similarity) on the right.
+ */
 import React from 'react';
 import { Camera, Users, ShieldCheck, ShieldAlert, CheckCircle2, XCircle, UserCheck, UserX, Radio } from 'lucide-react';
 import LiveMonitoring from '../components/LiveMonitoring';

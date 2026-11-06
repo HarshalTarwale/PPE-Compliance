@@ -1,3 +1,6 @@
+/**
+ * Red banner listing every worker currently missing required PPE.
+ */
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 

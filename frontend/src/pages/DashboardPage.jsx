@@ -1,3 +1,7 @@
+/**
+ * Dashboard page: violation banner, KPI cards (people, compliant,
+ * violations, FPS), stream status and the tracked-personnel table.
+ */
 import React from 'react';
 import { Users, ShieldCheck, ShieldAlert, Activity, Camera, ArrowRight, Radio } from 'lucide-react';
 import StatCard from '../components/StatCard';

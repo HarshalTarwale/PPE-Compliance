@@ -1,3 +1,7 @@
+/**
+ * Violation log page: history of PPE violations and unknown-person events,
+ * refreshed every few seconds, with an option to clear the log.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { History, RefreshCw, Trash2, ShieldAlert, UserX, UserCheck, HardHat, Shirt } from 'lucide-react';
 import { fetchSafetyEvents, clearSafetyEvents } from '../api/client';

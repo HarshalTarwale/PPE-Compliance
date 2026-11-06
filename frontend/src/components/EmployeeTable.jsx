@@ -1,3 +1,7 @@
+/**
+ * Table of people currently tracked by the camera, with hardhat / vest
+ * status per person and an All / Compliant / Violations filter.
+ */
 import React, { useState } from 'react';
 import { CheckCircle2, XCircle, UserX, UserCheck, ShieldCheck, ShieldAlert, Filter } from 'lucide-react';
 

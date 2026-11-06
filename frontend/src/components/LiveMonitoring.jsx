@@ -1,3 +1,8 @@
+/**
+ * Live camera viewport. Captures frames from the browser webcam (or shows the
+ * server camera), sends them to the backend for analysis, and draws the
+ * returned person boxes coloured green (compliant) or red (violation).
+ */
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Play, Square, Camera, Video, FlipHorizontal, Laptop, Server } from 'lucide-react';
 import { toggleCameraFlip, analyzeFrame, stopMonitoring, fetchMonitoringStatus } from '../api/client';

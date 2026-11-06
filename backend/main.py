@@ -135,6 +135,7 @@ def create_app(
 
     @app.middleware("http")
     async def serve_dashboard(request: Request, call_next):
+        """Serve the built React dashboard for page loads; pass API calls through."""
         from fastapi.responses import FileResponse
 
         if request.method == "GET" and index_file.is_file():
@@ -155,6 +156,7 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     async def root():
+        """Return the dashboard if it is built, otherwise redirect to the API docs."""
         from fastapi.responses import FileResponse, RedirectResponse
 
         if index_file.is_file():
@@ -167,6 +169,7 @@ def create_app(
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        """Return HTTP errors as JSON: {"detail": ...}."""
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -176,6 +179,7 @@ def create_app(
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        """Return request validation errors (bad body / params) as a 422 JSON response."""
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={"detail": "Request validation failed", "errors": exc.errors()},
@@ -183,6 +187,7 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Log unexpected errors and return a generic 500 JSON response."""
         logger.exception("Unhandled server exception on %s: %s", request.url.path, exc)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
